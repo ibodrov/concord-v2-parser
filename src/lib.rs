@@ -1,4 +1,4 @@
-use std::str::Chars;
+use std::{collections::HashMap, str::Chars};
 
 pub type Event = yaml_rust::Event;
 pub type Marker = yaml_rust::scanner::Marker;
@@ -31,7 +31,7 @@ impl From<yaml_rust::ScanError> for ParseError {
 
 fn next_event(input: &mut Input) -> Result<(Event, Marker), ParseError> {
     let (event, marker) = input.next()?;
-    // println!("! {event:?} @ {marker:?}");
+    println!("! {event:?} @ {marker:?}");
     Ok((event, marker))
 }
 
@@ -101,11 +101,26 @@ fn consume_string_constant(input: &mut Input, value: &str) -> Result<(), ParseEr
     }
 }
 
+fn peek_string_constant(input: &mut Input, value: &str) -> Result<bool, ParseError> {
+    match input.peek()? {
+        (Event::Scalar(scalar, ..), _) => Ok(scalar == value),
+        _ => Ok(false),
+    }
+}
+
+#[derive(Debug)]
+pub enum ConcordFlowStep {
+    TaskCall {
+        name: String,
+        input: HashMap<String, String>,
+    },
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct ConcordFlow {
     name: String,
-    steps: Vec<String>,
+    steps: Vec<ConcordFlowStep>,
 }
 
 #[allow(dead_code)]
@@ -114,12 +129,51 @@ pub struct ConcordDocument {
     flows: Vec<ConcordFlow>,
 }
 
-fn parse_step(input: &mut Input) -> Result<String, ParseError> {
+// TODO convert string->actual type
+fn parse_kv(input: &mut Input) -> Result<(String, String), ParseError> {
+    let (key, _) = consume_string(input)?;
+    let (value, _) = consume_string(input)?;
+    Ok((key, value))
+}
+
+fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
     consume_event!(input, Event::MappingStart(..))?;
-    let (name, _) = consume_string(input)?;
-    let (argument, _) = consume_string(input)?;
+
+    let step = match next_event(input)? {
+        (Event::Scalar(key, ..), _) if key == "log" => {
+            let (msg, _) = consume_string(input)?;
+            ConcordFlowStep::TaskCall {
+                name: "log".to_owned(),
+                input: HashMap::from([("msg".to_owned(), msg)]),
+            }
+        }
+        (Event::Scalar(key, ..), _) if key == "task" => {
+            let (name, _) = consume_string(input)?;
+            let mut input_parameters = HashMap::new();
+            if peek_string_constant(input, "in")? {
+                consume_event!(input, Event::Scalar(..))?;
+                consume_event!(input, Event::MappingStart(..))?;
+                let kvs = parse_until!(input, Event::MappingEnd, parse_kv);
+                input_parameters.extend(kvs);
+                consume_event!(input, Event::MappingEnd)?;
+            };
+            ConcordFlowStep::TaskCall {
+                name,
+                input: input_parameters,
+            }
+        }
+        (ev, marker) => {
+            return Err(ParseError {
+                marker: Some(marker),
+                kind: ErrorKind::UnexpectedSyntax,
+                msg: format!("Expected a flow step, got {ev:?}"),
+            })
+        }
+    };
+
     consume_event!(input, Event::MappingEnd)?;
-    Ok(format!("{name} -> {argument}"))
+
+    Ok(step)
 }
 
 fn parse_flow(input: &mut Input) -> Result<ConcordFlow, ParseError> {
@@ -268,5 +322,31 @@ mod tests {
         let mut input = yaml_rust::parser::Parser::new(src.chars());
         let result = parse_stream(&mut input);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn task_call() {
+        let src = r#"
+        flows:
+          default:
+            - task: foo
+              in:
+                a: 1
+                b: "Hello!"
+                c: false
+        "#;
+
+        let mut input = yaml_rust::parser::Parser::new(src.chars());
+        let result = parse_stream(&mut input).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].flows.len(), 1);
+        assert_eq!(result[0].flows[0].steps.len(), 1);
+        assert!(match &result[0].flows[0].steps[0] {
+            ConcordFlowStep::TaskCall { name, input } => {
+                assert_eq!(name, "foo");
+                assert_eq!(input.len(), 3);
+                true
+            }
+        });
     }
 }
