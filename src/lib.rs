@@ -6,8 +6,16 @@ pub type Marker = yaml_rust::scanner::Marker;
 pub type Input<'a> = yaml_rust::parser::Parser<Chars<'a>>;
 
 #[derive(Debug)]
+pub enum ErrorKind {
+    ScanError,
+    UnexpectedSyntax,
+}
+
+#[allow(dead_code)]
+#[derive(Debug)]
 pub struct ParseError {
     marker: Option<Marker>,
+    kind: ErrorKind,
     msg: String,
 }
 
@@ -15,6 +23,7 @@ impl From<yaml_rust::ScanError> for ParseError {
     fn from(value: yaml_rust::ScanError) -> Self {
         Self {
             marker: Some(*value.marker()),
+            kind: ErrorKind::ScanError,
             msg: value.to_string(),
         }
     }
@@ -31,6 +40,7 @@ fn peek_string(input: &mut Input) -> Result<Option<(String, Marker)>, ParseError
         (Event::Scalar(value, ..), marker) => Ok(Some((value.to_owned(), *marker))),
         (ev, marker) => Err(ParseError {
             marker: Some(*marker),
+            kind: ErrorKind::UnexpectedSyntax,
             msg: format!("Expected to peek a scalar, got {ev:?}"),
         }),
     }
@@ -42,6 +52,7 @@ macro_rules! consume_event {
             (ev @ $pat, marker) => Ok((ev, marker)),
             (ev, marker) => Err(ParseError {
                 marker: Some(marker.clone()),
+                kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected {}, got {ev:?}", stringify!($pat)),
             }),
         }
@@ -50,10 +61,7 @@ macro_rules! consume_event {
 
 macro_rules! peek_event {
     ($input:ident, $pat:pat) => {
-        match $input.peek()? {
-            ($pat, _) => true,
-            _ => false,
-        }
+        matches!($input.peek()?, ($pat, _))
     };
 }
 
@@ -76,6 +84,7 @@ fn consume_string(input: &mut Input) -> Result<(String, Marker), ParseError> {
         (Event::Scalar(value, ..), marker) => Ok((value.to_owned(), marker)),
         (ev, marker) => Err(ParseError {
             marker: Some(marker),
+            kind: ErrorKind::UnexpectedSyntax,
             msg: format!("Expected to peek a scalar, got {ev:?}"),
         }),
     }
@@ -86,17 +95,20 @@ fn consume_string_constant(input: &mut Input, value: &str) -> Result<(), ParseEr
         (Event::Scalar(scalar, ..), _) if scalar == value => Ok(()),
         (ev, marker) => Err(ParseError {
             marker: Some(marker),
+            kind: ErrorKind::UnexpectedSyntax,
             msg: format!("Expected a string {value}, got {ev:?}"),
         }),
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ConcordFlow {
     name: String,
     steps: Vec<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct ConcordDocument {
     flows: Vec<ConcordFlow>,
@@ -151,6 +163,7 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
             element => {
                 return Err(ParseError {
                     marker: Some(marker),
+                    kind: ErrorKind::UnexpectedSyntax,
                     msg: format!("Unexpected top-level element {element}"),
                 })
             }
