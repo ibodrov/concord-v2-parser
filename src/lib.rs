@@ -159,7 +159,7 @@ impl Input {
                 }
             }
             (Event::MappingStart(..), marker) => {
-                let result: HashMap<_, _> = parse_until!(self, Event::MappingEnd, next_kv)
+                let result = parse_until!(self, Event::MappingEnd, next_kv)
                     .into_iter()
                     .collect();
                 self.next_mapping_end()?;
