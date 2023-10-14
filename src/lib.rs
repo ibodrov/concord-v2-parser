@@ -49,9 +49,42 @@ impl Input {
         Ok((event.clone(), *marker))
     }
 
+    fn next_mapping_start(&mut self) -> Result<(Event, Marker), ParseError> {
+        match self.next()? {
+            item @ (Event::MappingStart(..), _) => Ok(item),
+            (ev, marker) => Err(ParseError {
+                marker: Some(marker),
+                kind: ErrorKind::UnexpectedSyntax,
+                msg: format!("Expected an object, got {ev:?}"),
+            }),
+        }
+    }
+
+    fn next_string(&mut self) -> Result<(String, Marker), ParseError> {
+        match self.next()? {
+            (Event::Scalar(value, ..), marker) => Ok((value.to_owned(), marker)),
+            (ev, marker) => Err(ParseError {
+                marker: Some(marker),
+                kind: ErrorKind::UnexpectedSyntax,
+                msg: format!("Expected to peek a scalar, got {ev:?}"),
+            }),
+        }
+    }
+
     fn peek(&mut self) -> Result<&(Event, Marker), ParseError> {
         self.check_eof()?;
         Ok(&self.items[self.idx])
+    }
+
+    fn peek_string(&mut self) -> Result<Option<(String, Marker)>, ParseError> {
+        match self.peek()? {
+            (Event::Scalar(value, ..), marker) => Ok(Some((value.to_owned(), *marker))),
+            (ev, marker) => Err(ParseError {
+                marker: Some(*marker),
+                kind: ErrorKind::UnexpectedSyntax,
+                msg: format!("Expected to peek a scalar, got {ev:?}"),
+            }),
+        }
     }
 }
 
@@ -79,17 +112,6 @@ impl From<yaml_rust::ScanError> for ParseError {
     }
 }
 
-fn peek_string(input: &mut Input) -> Result<Option<(String, Marker)>, ParseError> {
-    match input.peek()? {
-        (Event::Scalar(value, ..), marker) => Ok(Some((value.to_owned(), *marker))),
-        (ev, marker) => Err(ParseError {
-            marker: Some(*marker),
-            kind: ErrorKind::UnexpectedSyntax,
-            msg: format!("Expected to peek a scalar, got {ev:?}"),
-        }),
-    }
-}
-
 macro_rules! consume_event {
     ($input:ident, $pat:pat) => {
         match $input.next()? {
@@ -103,35 +125,18 @@ macro_rules! consume_event {
     };
 }
 
-macro_rules! peek_event {
-    ($input:ident, $pat:pat) => {
-        matches!($input.peek()?, ($pat, _))
-    };
-}
-
 macro_rules! parse_until {
     ($input:ident, $pat:pat, $parser:ident) => {{
         let mut items = Vec::new();
         loop {
             let item = $parser($input)?;
             items.push(item);
-            if peek_event!($input, $pat) {
+            if matches!($input.peek()?, ($pat, _)) {
                 break;
             }
         }
         items
     }};
-}
-
-fn consume_string(input: &mut Input) -> Result<(String, Marker), ParseError> {
-    match consume_event!(input, Event::Scalar(..))? {
-        (Event::Scalar(value, ..), marker) => Ok((value.to_owned(), marker)),
-        (ev, marker) => Err(ParseError {
-            marker: Some(marker),
-            kind: ErrorKind::UnexpectedSyntax,
-            msg: format!("Expected to peek a scalar, got {ev:?}"),
-        }),
-    }
 }
 
 #[derive(Debug)]
@@ -233,28 +238,28 @@ pub struct ConcordDocument {
 
 // TODO convert string->actual type
 fn parse_kv(input: &mut Input) -> Result<(String, Value), ParseError> {
-    let (key, _) = consume_string(input)?;
+    let (key, _) = input.next_string()?;
     let (value, _) = consume_value(input)?;
     Ok((key, value))
 }
 
 fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
-    consume_event!(input, Event::MappingStart(..))?;
+    input.next_mapping_start()?;
 
     let step = match input.next()? {
         (Event::Scalar(key, ..), _) if key == "log" => {
-            let (msg, _) = consume_string(input)?;
+            let (msg, _) = input.next_string()?;
             ConcordFlowStep::TaskCall {
                 name: "log".to_owned(),
                 input: HashMap::from([("msg".to_owned(), Value::String(msg))]),
             }
         }
         (Event::Scalar(key, ..), _) if key == "task" => {
-            let (name, _) = consume_string(input)?;
+            let (name, _) = input.next_string()?;
             let mut input_parameters = HashMap::new();
             if peek_string_constant(input, "in")? {
                 consume_event!(input, Event::Scalar(..))?;
-                consume_event!(input, Event::MappingStart(..))?;
+                input.next_mapping_start()?;
                 let kvs = parse_until!(input, Event::MappingEnd, parse_kv);
                 input_parameters.extend(kvs);
                 consume_event!(input, Event::MappingEnd)?;
@@ -279,14 +284,14 @@ fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
 }
 
 fn parse_flow(input: &mut Input) -> Result<ConcordFlow, ParseError> {
-    let (name, _) = consume_string(input)?;
+    let (name, _) = input.next_string()?;
     consume_event!(input, Event::SequenceStart(..))?;
 
     let mut steps = Vec::new();
     loop {
         let step = parse_step(input)?;
         steps.push(step);
-        if peek_event!(input, Event::SequenceEnd) {
+        if matches!(input.peek()?, (Event::SequenceEnd, _)) {
             break;
         }
     }
@@ -297,7 +302,7 @@ fn parse_flow(input: &mut Input) -> Result<ConcordFlow, ParseError> {
 
 fn parse_flows(input: &mut Input) -> Result<Vec<ConcordFlow>, ParseError> {
     consume_string_constant(input, "flows")?;
-    consume_event!(input, Event::MappingStart(..))?;
+    input.next_mapping_start()?;
     let result = parse_until!(input, Event::MappingEnd, parse_flow);
     consume_event!(input, Event::MappingEnd)?;
     Ok(result)
@@ -305,11 +310,11 @@ fn parse_flows(input: &mut Input) -> Result<Vec<ConcordFlow>, ParseError> {
 
 fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
     consume_event!(input, Event::DocumentStart)?;
-    consume_event!(input, Event::MappingStart(_))?;
+    input.next_mapping_start()?;
 
     // top-level elements
     let mut flows = Vec::new();
-    if let Some((top_level_element, marker)) = peek_string(input)? {
+    if let Some((top_level_element, marker)) = input.peek_string()? {
         match top_level_element.as_str() {
             "flows" => {
                 for flow in parse_flows(input)? {
