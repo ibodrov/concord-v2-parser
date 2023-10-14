@@ -28,6 +28,19 @@ impl TryFrom<&str> for Input {
     }
 }
 
+macro_rules! match_next {
+    ($input:ident, $pat:pat) => {
+        match $input.next()? {
+            (ev @ $pat, marker) => Ok((ev, marker)),
+            (ev, marker) => Err(ParseError {
+                marker: Some(marker.clone()),
+                kind: ErrorKind::UnexpectedSyntax,
+                msg: format!("Expected {}, got {ev:?}", stringify!($pat)),
+            }),
+        }
+    };
+}
+
 impl Input {
     fn check_eof(&self) -> Result<(), ParseError> {
         if self.idx >= self.items.len() {
@@ -49,15 +62,36 @@ impl Input {
         Ok((event.clone(), *marker))
     }
 
+    fn next_stream_start(&mut self) -> Result<(Event, Marker), ParseError> {
+        match_next!(self, Event::StreamStart)
+    }
+
+    fn next_stream_end(&mut self) -> Result<(Event, Marker), ParseError> {
+        match_next!(self, Event::StreamEnd)
+    }
+
+    fn next_document_start(&mut self) -> Result<(Event, Marker), ParseError> {
+        match_next!(self, Event::DocumentStart)
+    }
+
+    fn next_document_end(&mut self) -> Result<(Event, Marker), ParseError> {
+        match_next!(self, Event::DocumentEnd)
+    }
+
     fn next_mapping_start(&mut self) -> Result<(Event, Marker), ParseError> {
-        match self.next()? {
-            item @ (Event::MappingStart(..), _) => Ok(item),
-            (ev, marker) => Err(ParseError {
-                marker: Some(marker),
-                kind: ErrorKind::UnexpectedSyntax,
-                msg: format!("Expected an object, got {ev:?}"),
-            }),
-        }
+        match_next!(self, Event::MappingStart(..))
+    }
+
+    fn next_mapping_end(&mut self) -> Result<(Event, Marker), ParseError> {
+        match_next!(self, Event::MappingEnd)
+    }
+
+    fn next_sequence_start(&mut self) -> Result<(Event, Marker), ParseError> {
+        match_next!(self, Event::SequenceStart(..))
+    }
+
+    fn next_sequence_end(&mut self) -> Result<(Event, Marker), ParseError> {
+        match_next!(self, Event::SequenceEnd)
     }
 
     fn next_string(&mut self) -> Result<(String, Marker), ParseError> {
@@ -110,19 +144,6 @@ impl From<yaml_rust::ScanError> for ParseError {
             msg: value.to_string(),
         }
     }
-}
-
-macro_rules! consume_event {
-    ($input:ident, $pat:pat) => {
-        match $input.next()? {
-            (ev @ $pat, marker) => Ok((ev, marker)),
-            (ev, marker) => Err(ParseError {
-                marker: Some(marker.clone()),
-                kind: ErrorKind::UnexpectedSyntax,
-                msg: format!("Expected {}, got {ev:?}", stringify!($pat)),
-            }),
-        }
-    };
 }
 
 macro_rules! parse_until {
@@ -258,11 +279,11 @@ fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
             let (name, _) = input.next_string()?;
             let mut input_parameters = HashMap::new();
             if peek_string_constant(input, "in")? {
-                consume_event!(input, Event::Scalar(..))?;
+                input.next()?;
                 input.next_mapping_start()?;
                 let kvs = parse_until!(input, Event::MappingEnd, parse_kv);
                 input_parameters.extend(kvs);
-                consume_event!(input, Event::MappingEnd)?;
+                input.next_mapping_end()?;
             };
             ConcordFlowStep::TaskCall {
                 name,
@@ -278,14 +299,14 @@ fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
         }
     };
 
-    consume_event!(input, Event::MappingEnd)?;
+    input.next_mapping_end()?;
 
     Ok(step)
 }
 
 fn parse_flow(input: &mut Input) -> Result<ConcordFlow, ParseError> {
     let (name, _) = input.next_string()?;
-    consume_event!(input, Event::SequenceStart(..))?;
+    input.next_sequence_start()?;
 
     let mut steps = Vec::new();
     loop {
@@ -295,7 +316,7 @@ fn parse_flow(input: &mut Input) -> Result<ConcordFlow, ParseError> {
             break;
         }
     }
-    consume_event!(input, Event::SequenceEnd)?;
+    input.next_sequence_end()?;
 
     Ok(ConcordFlow { name, steps })
 }
@@ -304,12 +325,12 @@ fn parse_flows(input: &mut Input) -> Result<Vec<ConcordFlow>, ParseError> {
     consume_string_constant(input, "flows")?;
     input.next_mapping_start()?;
     let result = parse_until!(input, Event::MappingEnd, parse_flow);
-    consume_event!(input, Event::MappingEnd)?;
+    input.next_mapping_end()?;
     Ok(result)
 }
 
 fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
-    consume_event!(input, Event::DocumentStart)?;
+    input.next_document_start()?;
     input.next_mapping_start()?;
 
     // top-level elements
@@ -331,16 +352,16 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
         }
     }
 
-    consume_event!(input, Event::MappingEnd)?;
-    consume_event!(input, Event::DocumentEnd)?;
+    input.next_mapping_end()?;
+    input.next_document_end()?;
 
     Ok(ConcordDocument { flows })
 }
 
 pub fn parse_stream(input: &mut Input) -> Result<Vec<ConcordDocument>, ParseError> {
-    consume_event!(input, Event::StreamStart)?;
+    input.next_stream_start()?;
     let result = parse_until!(input, Event::StreamEnd, parse_document);
-    consume_event!(input, Event::StreamEnd)?;
+    input.next_stream_end()?;
     Ok(result)
 }
 
