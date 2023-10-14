@@ -1,9 +1,59 @@
-use std::{collections::HashMap, str::Chars};
+use std::collections::HashMap;
 
 pub type Event = yaml_rust::Event;
 pub type Marker = yaml_rust::scanner::Marker;
 
-pub type Input<'a> = yaml_rust::parser::Parser<Chars<'a>>;
+// pub type Input<'a> = yaml_rust::parser::Parser<Chars<'a>>;
+
+pub struct Input {
+    items: Vec<(Event, Marker)>,
+    idx: usize,
+}
+
+impl TryFrom<&str> for Input {
+    type Error = ParseError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let mut parser = yaml_rust::parser::Parser::new(value.chars());
+        let mut items = Vec::new();
+        loop {
+            let (ev, marker) = parser.next()?;
+            let done = ev == Event::StreamEnd;
+            items.push((ev, marker));
+            if done {
+                break;
+            }
+        }
+        Ok(Input { items, idx: 0 })
+    }
+}
+
+impl Input {
+    fn check_eof(&self) -> Result<(), ParseError> {
+        if self.idx >= self.items.len() {
+            Err(ParseError {
+                marker: None,
+                kind: ErrorKind::ScanError,
+                msg: "EOF".to_string(),
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn next(&mut self) -> Result<(Event, Marker), ParseError> {
+        self.check_eof()?;
+        let (event, marker) = &self.items[self.idx];
+        println!("next: [{}] {event:?} @ {marker:?}", self.idx);
+        self.idx += 1;
+        Ok((event.clone(), *marker))
+    }
+
+    fn peek(&mut self) -> Result<&(Event, Marker), ParseError> {
+        self.check_eof()?;
+        Ok(&self.items[self.idx])
+    }
+}
 
 #[derive(Debug)]
 pub enum ErrorKind {
@@ -29,12 +79,6 @@ impl From<yaml_rust::ScanError> for ParseError {
     }
 }
 
-fn next_event(input: &mut Input) -> Result<(Event, Marker), ParseError> {
-    let (event, marker) = input.next()?;
-    println!("! {event:?} @ {marker:?}");
-    Ok((event, marker))
-}
-
 fn peek_string(input: &mut Input) -> Result<Option<(String, Marker)>, ParseError> {
     match input.peek()? {
         (Event::Scalar(value, ..), marker) => Ok(Some((value.to_owned(), *marker))),
@@ -48,7 +92,7 @@ fn peek_string(input: &mut Input) -> Result<Option<(String, Marker)>, ParseError
 
 macro_rules! consume_event {
     ($input:ident, $pat:pat) => {
-        match next_event($input)? {
+        match $input.next()? {
             (ev @ $pat, marker) => Ok((ev, marker)),
             (ev, marker) => Err(ParseError {
                 marker: Some(marker.clone()),
@@ -115,7 +159,7 @@ fn parse_f64(value: &str) -> Result<f64, ParseError> {
 }
 
 fn consume_value(input: &mut Input) -> Result<(Value, Marker), ParseError> {
-    match next_event(input)? {
+    match input.next()? {
         (Event::Scalar(scalar, style, ..), marker) => {
             use yaml_rust::scanner::TScalarStyle::*;
             match style {
@@ -149,7 +193,7 @@ fn consume_value(input: &mut Input) -> Result<(Value, Marker), ParseError> {
 }
 
 fn consume_string_constant(input: &mut Input, value: &str) -> Result<(), ParseError> {
-    match next_event(input)? {
+    match input.next()? {
         (Event::Scalar(scalar, ..), _) if scalar == value => Ok(()),
         (ev, marker) => Err(ParseError {
             marker: Some(marker),
@@ -197,7 +241,7 @@ fn parse_kv(input: &mut Input) -> Result<(String, Value), ParseError> {
 fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
     consume_event!(input, Event::MappingStart(..))?;
 
-    let step = match next_event(input)? {
+    let step = match input.next()? {
         (Event::Scalar(key, ..), _) if key == "log" => {
             let (msg, _) = consume_string(input)?;
             ConcordFlowStep::TaskCall {
@@ -311,7 +355,7 @@ mod tests {
             - log: "Hello!"
         "#;
 
-        let mut input = yaml_rust::parser::Parser::new(src.chars());
+        let mut input = Input::try_from(src).unwrap();
         let result = parse_stream(&mut input).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].flows.len(), 1);
@@ -329,7 +373,7 @@ mod tests {
             - log: "Yo!"
         "#;
 
-        let mut input = yaml_rust::parser::Parser::new(src.chars());
+        let mut input = Input::try_from(src).unwrap();
         let result = parse_stream(&mut input).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].flows.len(), 2);
@@ -343,7 +387,7 @@ mod tests {
     fn multiple_docs() {
         let src = "---\nflows:\n  default:\n    - log: \"Hello!\"\n---\nflows:\n  another_one:\n    - log: \"Bye!\"";
 
-        let mut input = yaml_rust::parser::Parser::new(src.chars());
+        let mut input = Input::try_from(src).unwrap();
         let result = parse_stream(&mut input).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].flows.len(), 1);
@@ -363,7 +407,7 @@ mod tests {
             - log: "Bye!"
         "#;
 
-        let mut input = yaml_rust::parser::Parser::new(src.chars());
+        let mut input = Input::try_from(src).unwrap();
         let result = parse_stream(&mut input).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].flows.len(), 1);
@@ -381,7 +425,7 @@ mod tests {
         gizmos: ["a", 1, false]
         "#;
 
-        let mut input = yaml_rust::parser::Parser::new(src.chars());
+        let mut input = Input::try_from(src).unwrap();
         let result = parse_stream(&mut input);
         assert!(result.is_err());
     }
@@ -398,7 +442,7 @@ mod tests {
                 c: false
         "#;
 
-        let mut input = yaml_rust::parser::Parser::new(src.chars());
+        let mut input = Input::try_from(src).unwrap();
         let result = parse_stream(&mut input).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].flows.len(), 1);
