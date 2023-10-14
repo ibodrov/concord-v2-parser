@@ -90,6 +90,49 @@ fn consume_string(input: &mut Input) -> Result<(String, Marker), ParseError> {
     }
 }
 
+#[derive(Debug)]
+pub enum Value {
+    String(String),
+    Boolean(bool),
+    Number(f64),
+    Array(Vec<Value>),
+    Mapping(HashMap<String, Value>),
+}
+
+fn consume_value(input: &mut Input) -> Result<(Value, Marker), ParseError> {
+    match next_event(input)? {
+        (Event::Scalar(scalar, style, ..), marker) => {
+            use yaml_rust::scanner::TScalarStyle::*;
+            match style {
+                SingleQuoted | DoubleQuoted => Ok((Value::String(scalar), marker)),
+                Plain => {
+                    if let Ok(value) = scalar.parse::<f64>() {
+                        Ok((Value::Number(value), marker))
+                    } else if let Ok(value) = scalar.parse::<bool>() {
+                        Ok((Value::Boolean(value), marker))
+                    } else {
+                        Err(ParseError {
+                            marker: Some(marker),
+                            kind: ErrorKind::UnexpectedSyntax,
+                            msg: format!("Unsupported plain value syntax, got \"{scalar}\""),
+                        })
+                    }
+                }
+                _ => Err(ParseError {
+                    marker: Some(marker),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unsupported value syntax, got \"{scalar}\" as {style:?}"),
+                }),
+            }
+        }
+        (ev, marker) => Err(ParseError {
+            marker: Some(marker),
+            kind: ErrorKind::UnexpectedSyntax,
+            msg: format!("Expected a value, got {ev:?}"),
+        }),
+    }
+}
+
 fn consume_string_constant(input: &mut Input, value: &str) -> Result<(), ParseError> {
     match next_event(input)? {
         (Event::Scalar(scalar, ..), _) if scalar == value => Ok(()),
@@ -112,7 +155,7 @@ fn peek_string_constant(input: &mut Input, value: &str) -> Result<bool, ParseErr
 pub enum ConcordFlowStep {
     TaskCall {
         name: String,
-        input: HashMap<String, String>,
+        input: HashMap<String, Value>,
     },
 }
 
@@ -130,9 +173,9 @@ pub struct ConcordDocument {
 }
 
 // TODO convert string->actual type
-fn parse_kv(input: &mut Input) -> Result<(String, String), ParseError> {
+fn parse_kv(input: &mut Input) -> Result<(String, Value), ParseError> {
     let (key, _) = consume_string(input)?;
-    let (value, _) = consume_string(input)?;
+    let (value, _) = consume_value(input)?;
     Ok((key, value))
 }
 
@@ -144,7 +187,7 @@ fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
             let (msg, _) = consume_string(input)?;
             ConcordFlowStep::TaskCall {
                 name: "log".to_owned(),
-                input: HashMap::from([("msg".to_owned(), msg)]),
+                input: HashMap::from([("msg".to_owned(), Value::String(msg))]),
             }
         }
         (Event::Scalar(key, ..), _) if key == "task" => {
@@ -345,6 +388,9 @@ mod tests {
             ConcordFlowStep::TaskCall { name, input } => {
                 assert_eq!(name, "foo");
                 assert_eq!(input.len(), 3);
+                assert!(matches!(input.get("a"), Some(Value::Number(_))));
+                assert!(matches!(input.get("b"), Some(Value::String(_))));
+                assert!(matches!(input.get("c"), Some(Value::Boolean(false))));
                 true
             }
         });
