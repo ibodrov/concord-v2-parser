@@ -127,6 +127,17 @@ impl Input {
         }
     }
 
+    fn next_string_constant(&mut self, value: &str) -> Result<(), ParseError> {
+        match self.next()? {
+            (Event::Scalar(scalar, ..), _) if scalar == value => Ok(()),
+            (ev, marker) => Err(ParseError {
+                marker: Some(marker),
+                kind: ErrorKind::UnexpectedSyntax,
+                msg: format!("Expected a string {value}, got {ev:?}"),
+            }),
+        }
+    }
+
     fn next_kv(&mut self) -> Result<(String, Value), ParseError> {
         let (key, _) = self.next_string()?;
         let (value, _) = self.next_value()?;
@@ -188,6 +199,13 @@ impl Input {
             }),
         }
     }
+
+    fn peek_string_constant(&mut self, value: &str) -> Result<bool, ParseError> {
+        match self.peek()? {
+            (Event::Scalar(scalar, ..), _) => Ok(scalar == value),
+            _ => Ok(false),
+        }
+    }
 }
 
 // just a helper to simplify parse_until! usage
@@ -234,24 +252,6 @@ fn parse_f64(value: &str) -> Result<f64, ParseError> {
     }
 }
 
-fn consume_string_constant(input: &mut Input, value: &str) -> Result<(), ParseError> {
-    match input.next()? {
-        (Event::Scalar(scalar, ..), _) if scalar == value => Ok(()),
-        (ev, marker) => Err(ParseError {
-            marker: Some(marker),
-            kind: ErrorKind::UnexpectedSyntax,
-            msg: format!("Expected a string {value}, got {ev:?}"),
-        }),
-    }
-}
-
-fn peek_string_constant(input: &mut Input, value: &str) -> Result<bool, ParseError> {
-    match input.peek()? {
-        (Event::Scalar(scalar, ..), _) => Ok(scalar == value),
-        _ => Ok(false),
-    }
-}
-
 #[derive(Debug)]
 pub enum ConcordFlowStep {
     TaskCall {
@@ -276,7 +276,7 @@ pub struct ConcordDocument {
 fn parse_task_call(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
     let (name, _) = input.next_string()?;
     let mut input_parameters = HashMap::new();
-    if peek_string_constant(input, "in")? {
+    if input.peek_string_constant("in")? {
         input.next()?;
         input.next_mapping_start()?;
         let kvs = parse_until!(input, Event::MappingEnd, next_kv);
@@ -324,7 +324,7 @@ fn parse_flow(input: &mut Input) -> Result<ConcordFlow, ParseError> {
 }
 
 fn parse_flows(input: &mut Input) -> Result<Vec<ConcordFlow>, ParseError> {
-    consume_string_constant(input, "flows")?;
+    input.next_string_constant("flows")?;
     input.next_mapping_start()?;
     let result = parse_until!(input, Event::MappingEnd, parse_flow);
     input.next_mapping_end()?;
