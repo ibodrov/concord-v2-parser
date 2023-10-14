@@ -99,6 +99,21 @@ pub enum Value {
     Mapping(HashMap<String, Value>),
 }
 
+// from https://github.com/chyh1990/yaml-rust/blob/master/src/yaml.rs
+// with minor changes (Option -> Result)
+fn parse_f64(value: &str) -> Result<f64, ParseError> {
+    match value {
+        ".inf" | ".Inf" | ".INF" | "+.inf" | "+.Inf" | "+.INF" => Ok(f64::INFINITY),
+        "-.inf" | "-.Inf" | "-.INF" => Ok(f64::NEG_INFINITY),
+        ".nan" | "NaN" | ".NAN" => Ok(f64::NAN),
+        _ => value.parse::<f64>().map_err(|e| ParseError {
+            marker: None,
+            kind: ErrorKind::UnexpectedSyntax,
+            msg: format!("Invalid float number {value}: {e}"),
+        }),
+    }
+}
+
 fn consume_value(input: &mut Input) -> Result<(Value, Marker), ParseError> {
     match next_event(input)? {
         (Event::Scalar(scalar, style, ..), marker) => {
@@ -106,7 +121,7 @@ fn consume_value(input: &mut Input) -> Result<(Value, Marker), ParseError> {
             match style {
                 SingleQuoted | DoubleQuoted => Ok((Value::String(scalar), marker)),
                 Plain => {
-                    if let Ok(value) = scalar.parse::<f64>() {
+                    if let Ok(value) = parse_f64(&scalar) {
                         Ok((Value::Number(value), marker))
                     } else if let Ok(value) = scalar.parse::<bool>() {
                         Ok((Value::Boolean(value), marker))
@@ -284,6 +299,10 @@ pub fn parse_stream(input: &mut Input) -> Result<Vec<ConcordDocument>, ParseErro
 mod tests {
     use super::*;
 
+    fn matches_f64(value: Option<&Value>, expected: f64) -> bool {
+        matches!(value, Some(Value::Number(value)) if value.to_bits() == expected.to_bits())
+    }
+
     #[test]
     fn hello_world() {
         let src = r#"
@@ -374,7 +393,7 @@ mod tests {
           default:
             - task: foo
               in:
-                a: 1
+                a: 1.23456789
                 b: "Hello!"
                 c: false
         "#;
@@ -388,8 +407,8 @@ mod tests {
             ConcordFlowStep::TaskCall { name, input } => {
                 assert_eq!(name, "foo");
                 assert_eq!(input.len(), 3);
-                assert!(matches!(input.get("a"), Some(Value::Number(_))));
-                assert!(matches!(input.get("b"), Some(Value::String(_))));
+                assert!(matches_f64(input.get("a"), 1.23456789));
+                assert!(matches!(input.get("b"), Some(Value::String(value)) if value == "Hello!"));
                 assert!(matches!(input.get("c"), Some(Value::Boolean(false))));
                 true
             }
