@@ -3,7 +3,15 @@ use std::collections::HashMap;
 pub type Event = yaml_rust::Event;
 pub type Marker = yaml_rust::scanner::Marker;
 
-// pub type Input<'a> = yaml_rust::parser::Parser<Chars<'a>>;
+#[derive(Debug)]
+pub enum Value {
+    String(String),
+    Boolean(bool),
+    Float(String), // keep float numbers as strings to avoid any conversion issues
+    Integer(i64),
+    Array(Vec<Value>),
+    Mapping(HashMap<String, Value>),
+}
 
 pub struct Input {
     items: Vec<(Event, Marker)>,
@@ -39,6 +47,20 @@ macro_rules! match_next {
             }),
         }
     };
+}
+
+macro_rules! parse_until {
+    ($input:ident, $pat:pat, $parser:ident) => {{
+        let mut items = Vec::new();
+        loop {
+            let item = $parser($input)?;
+            items.push(item);
+            if matches!($input.peek()?, ($pat, _)) {
+                break;
+            }
+        }
+        items
+    }};
 }
 
 impl Input {
@@ -105,6 +127,52 @@ impl Input {
         }
     }
 
+    fn next_kv(&mut self) -> Result<(String, Value), ParseError> {
+        let (key, _) = self.next_string()?;
+        let (value, _) = self.next_value()?;
+        Ok((key, value))
+    }
+
+    fn next_value(&mut self) -> Result<(Value, Marker), ParseError> {
+        match self.next()? {
+            (Event::Scalar(scalar, style, ..), marker) => {
+                use yaml_rust::scanner::TScalarStyle::*;
+                match style {
+                    SingleQuoted | DoubleQuoted => Ok((Value::String(scalar), marker)),
+                    Plain => {
+                        if parse_f64(&scalar).is_ok() {
+                            Ok((Value::Float(scalar), marker))
+                        } else if let Ok(value) = scalar.parse::<i64>() {
+                            Ok((Value::Integer(value), marker))
+                        } else if let Ok(value) = scalar.parse::<bool>() {
+                            // TODO handle "yes/no", etc
+                            Ok((Value::Boolean(value), marker))
+                        } else {
+                            Ok((Value::String(scalar), marker))
+                        }
+                    }
+                    _ => Err(ParseError {
+                        marker: Some(marker),
+                        kind: ErrorKind::UnexpectedSyntax,
+                        msg: format!("Unsupported value syntax, got \"{scalar}\" as {style:?}"),
+                    }),
+                }
+            }
+            (Event::MappingStart(..), marker) => {
+                let result: HashMap<_, _> = parse_until!(self, Event::MappingEnd, next_kv)
+                    .into_iter()
+                    .collect();
+                self.next_mapping_end()?;
+                Ok((Value::Mapping(result), marker))
+            }
+            (ev, marker) => Err(ParseError {
+                marker: Some(marker),
+                kind: ErrorKind::UnexpectedSyntax,
+                msg: format!("Expected a value, got {ev:?}"),
+            }),
+        }
+    }
+
     fn peek(&mut self) -> Result<&(Event, Marker), ParseError> {
         self.check_eof()?;
         Ok(&self.items[self.idx])
@@ -120,6 +188,11 @@ impl Input {
             }),
         }
     }
+}
+
+// just a helper to simplify parse_until! usage
+fn next_kv(input: &mut Input) -> Result<(String, Value), ParseError> {
+    input.next_kv()
 }
 
 #[derive(Debug)]
@@ -146,29 +219,6 @@ impl From<yaml_rust::ScanError> for ParseError {
     }
 }
 
-macro_rules! parse_until {
-    ($input:ident, $pat:pat, $parser:ident) => {{
-        let mut items = Vec::new();
-        loop {
-            let item = $parser($input)?;
-            items.push(item);
-            if matches!($input.peek()?, ($pat, _)) {
-                break;
-            }
-        }
-        items
-    }};
-}
-
-#[derive(Debug)]
-pub enum Value {
-    String(String),
-    Boolean(bool),
-    Number(f64),
-    Array(Vec<Value>),
-    Mapping(HashMap<String, Value>),
-}
-
 // from https://github.com/chyh1990/yaml-rust/blob/master/src/yaml.rs
 // with minor changes (Option -> Result)
 fn parse_f64(value: &str) -> Result<f64, ParseError> {
@@ -180,40 +230,6 @@ fn parse_f64(value: &str) -> Result<f64, ParseError> {
             marker: None,
             kind: ErrorKind::UnexpectedSyntax,
             msg: format!("Invalid float number {value}: {e}"),
-        }),
-    }
-}
-
-fn consume_value(input: &mut Input) -> Result<(Value, Marker), ParseError> {
-    match input.next()? {
-        (Event::Scalar(scalar, style, ..), marker) => {
-            use yaml_rust::scanner::TScalarStyle::*;
-            match style {
-                SingleQuoted | DoubleQuoted => Ok((Value::String(scalar), marker)),
-                Plain => {
-                    if let Ok(value) = parse_f64(&scalar) {
-                        Ok((Value::Number(value), marker))
-                    } else if let Ok(value) = scalar.parse::<bool>() {
-                        Ok((Value::Boolean(value), marker))
-                    } else {
-                        Err(ParseError {
-                            marker: Some(marker),
-                            kind: ErrorKind::UnexpectedSyntax,
-                            msg: format!("Unsupported plain value syntax, got \"{scalar}\""),
-                        })
-                    }
-                }
-                _ => Err(ParseError {
-                    marker: Some(marker),
-                    kind: ErrorKind::UnexpectedSyntax,
-                    msg: format!("Unsupported value syntax, got \"{scalar}\" as {style:?}"),
-                }),
-            }
-        }
-        (ev, marker) => Err(ParseError {
-            marker: Some(marker),
-            kind: ErrorKind::UnexpectedSyntax,
-            msg: format!("Expected a value, got {ev:?}"),
         }),
     }
 }
@@ -257,11 +273,20 @@ pub struct ConcordDocument {
     flows: Vec<ConcordFlow>,
 }
 
-// TODO convert string->actual type
-fn parse_kv(input: &mut Input) -> Result<(String, Value), ParseError> {
-    let (key, _) = input.next_string()?;
-    let (value, _) = consume_value(input)?;
-    Ok((key, value))
+fn parse_task_call(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
+    let (name, _) = input.next_string()?;
+    let mut input_parameters = HashMap::new();
+    if peek_string_constant(input, "in")? {
+        input.next()?;
+        input.next_mapping_start()?;
+        let kvs = parse_until!(input, Event::MappingEnd, next_kv);
+        input_parameters.extend(kvs);
+        input.next_mapping_end()?;
+    };
+    Ok(ConcordFlowStep::TaskCall {
+        name,
+        input: input_parameters,
+    })
 }
 
 fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
@@ -275,21 +300,7 @@ fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
                 input: HashMap::from([("msg".to_owned(), Value::String(msg))]),
             }
         }
-        (Event::Scalar(key, ..), _) if key == "task" => {
-            let (name, _) = input.next_string()?;
-            let mut input_parameters = HashMap::new();
-            if peek_string_constant(input, "in")? {
-                input.next()?;
-                input.next_mapping_start()?;
-                let kvs = parse_until!(input, Event::MappingEnd, parse_kv);
-                input_parameters.extend(kvs);
-                input.next_mapping_end()?;
-            };
-            ConcordFlowStep::TaskCall {
-                name,
-                input: input_parameters,
-            }
-        }
+        (Event::Scalar(key, ..), _) if key == "task" => parse_task_call(input)?,
         (ev, marker) => {
             return Err(ParseError {
                 marker: Some(marker),
@@ -307,17 +318,8 @@ fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
 fn parse_flow(input: &mut Input) -> Result<ConcordFlow, ParseError> {
     let (name, _) = input.next_string()?;
     input.next_sequence_start()?;
-
-    let mut steps = Vec::new();
-    loop {
-        let step = parse_step(input)?;
-        steps.push(step);
-        if matches!(input.peek()?, (Event::SequenceEnd, _)) {
-            break;
-        }
-    }
+    let steps = parse_until!(input, Event::SequenceEnd, parse_step);
     input.next_sequence_end()?;
-
     Ok(ConcordFlow { name, steps })
 }
 
@@ -369,8 +371,8 @@ pub fn parse_stream(input: &mut Input) -> Result<Vec<ConcordDocument>, ParseErro
 mod tests {
     use super::*;
 
-    fn matches_f64(value: Option<&Value>, expected: f64) -> bool {
-        matches!(value, Some(Value::Number(value)) if value.to_bits() == expected.to_bits())
+    fn matches_float(value: Option<&Value>, expected: &str) -> bool {
+        matches!(value, Some(Value::Float(value)) if value == expected)
     }
 
     #[test]
@@ -466,6 +468,10 @@ mod tests {
                 a: 1.23456789
                 b: "Hello!"
                 c: false
+                d:
+                  x:
+                    y:
+                      z: true
         "#;
 
         let mut input = Input::try_from(src).unwrap();
@@ -476,10 +482,11 @@ mod tests {
         assert!(match &result[0].flows[0].steps[0] {
             ConcordFlowStep::TaskCall { name, input } => {
                 assert_eq!(name, "foo");
-                assert_eq!(input.len(), 3);
-                assert!(matches_f64(input.get("a"), 1.23456789));
+                assert_eq!(input.len(), 4);
+                assert!(matches_float(input.get("a"), "1.23456789"));
                 assert!(matches!(input.get("b"), Some(Value::String(value)) if value == "Hello!"));
                 assert!(matches!(input.get("c"), Some(Value::Boolean(false))));
+                assert!(matches!(input.get("d"), Some(Value::Mapping(..))));
                 true
             }
         });
