@@ -10,7 +10,7 @@ pub struct ThreadId(u32);
 pub enum StateCommand {
     PopCommand(ThreadId),
     PopFrame(ThreadId),
-    DeleteThread(ThreadId),
+    PopThread,
 }
 
 /// A unit of execution. Can return StateCommands to modify the VM state.
@@ -43,7 +43,8 @@ impl Thread {
         if let Some(frame) = self.frames.last_mut() {
             frame.eval(thread_id)
         } else {
-            Ok(Some(StateCommand::DeleteThread(self.id)))
+            // no more frames
+            Ok(Some(StateCommand::PopThread))
         }
     }
 }
@@ -53,7 +54,8 @@ impl Frame {
         if let Some(command) = self.commands.last_mut() {
             command.eval(thread_id)
         } else {
-            Ok(Some(StateCommand::DeleteThread(thread_id)))
+            // no more commands
+            Ok(Some(StateCommand::PopFrame(thread_id)))
         }
     }
 }
@@ -77,6 +79,31 @@ impl VM {
                 frames,
             }],
         }
+    }
+
+    pub fn run(&mut self, thread_id: ThreadId) -> Result<(), VmError> {
+        loop {
+            let thread = self.get_thread_mut(thread_id).ok_or_else(|| VmError {
+                msg: format!("Thread {thread_id:?} not found"),
+            })?;
+
+            if let Some(command) = thread.eval()? {
+                match command {
+                    StateCommand::PopCommand(thread_id) => {
+                        self.pop_command(thread_id)?;
+                    }
+                    StateCommand::PopFrame(thread_id) => {
+                        self.pop_frame(thread_id)?;
+                    }
+                    StateCommand::PopThread => {
+                        self.pop_thread(thread_id)?;
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn get_thread_mut(&mut self, thread_id: ThreadId) -> Option<&mut Thread> {
@@ -120,7 +147,7 @@ impl VM {
         Ok(())
     }
 
-    fn delete_thread(&mut self, thread_id: ThreadId) -> Result<(), VmError> {
+    fn pop_thread(&mut self, thread_id: ThreadId) -> Result<(), VmError> {
         let idx = self
             .threads
             .binary_search_by_key(&thread_id, |thread| thread.id)
@@ -128,39 +155,6 @@ impl VM {
                 msg: format!("Can't remove non-existent thread {thread_id:?}"),
             })?;
         self.threads.remove(idx);
-        Ok(())
-    }
-
-    pub fn run(&mut self, thread_id: ThreadId) -> Result<(), VmError> {
-        loop {
-            if self.threads.is_empty() {
-                break;
-            }
-
-            let state_command;
-            if let Some(thread) = self.get_thread_mut(thread_id) {
-                state_command = thread.eval()?;
-                if thread.frames.is_empty() {
-                    self.delete_thread(thread_id)?;
-                }
-            } else {
-                break;
-            }
-
-            if let Some(command) = state_command {
-                match command {
-                    StateCommand::PopCommand(thread_id) => {
-                        self.pop_command(thread_id)?;
-                    }
-                    StateCommand::PopFrame(thread_id) => {
-                        self.pop_frame(thread_id)?;
-                    }
-                    StateCommand::DeleteThread(thread_id) => {
-                        self.delete_thread(thread_id)?;
-                    }
-                }
-            }
-        }
         Ok(())
     }
 }
