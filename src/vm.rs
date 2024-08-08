@@ -107,9 +107,7 @@ impl VM {
     }
 
     fn get_thread_mut(&mut self, thread_id: ThreadId) -> Option<&mut Thread> {
-        self.threads
-            .iter_mut()
-            .find(|thread| thread.id == thread_id)
+        self.threads.iter_mut().find(|thread| thread.id == thread_id)
     }
 
     fn assert_thread_mut(&mut self, thread_id: ThreadId) -> Result<&mut Thread, VmError> {

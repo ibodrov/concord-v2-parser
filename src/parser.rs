@@ -431,13 +431,7 @@ mod tests {
 
         let mut input = Input::try_from(src).unwrap();
         let result = parse_stream(&mut input);
-        assert!(matches!(
-            result,
-            Err(ParseError {
-                marker: Some(..),
-                ..
-            })
-        ));
+        assert!(matches!(result, Err(ParseError { marker: Some(..), .. })));
     }
 
     #[test]
