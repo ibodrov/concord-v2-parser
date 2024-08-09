@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display};
 
-use crate::model::{ConcordDocument, ConcordFlow, ConcordFlowStep, Value};
+use crate::model::{self, ConcordDocument, ConcordFlow, ConcordFlowStep, Value, KV};
 
 pub type Event = yaml_rust2::Event;
 pub type Marker = yaml_rust2::scanner::Marker;
@@ -71,7 +71,6 @@ impl Input {
     fn next(&mut self) -> Result<(Event, Marker), ParseError> {
         self.check_eof()?;
         let (event, marker) = &self.items[self.idx];
-        println!("next: [{}] {event:?} @ {marker:?}", self.idx);
         self.idx += 1;
         Ok((event.clone(), *marker))
     }
@@ -130,7 +129,7 @@ impl Input {
         }
     }
 
-    fn next_kv(&mut self) -> Result<(String, Value), ParseError> {
+    fn next_kv(&mut self) -> Result<KV, ParseError> {
         let (key, _) = self.next_string()?;
         let (value, _) = self.next_value()?;
         Ok((key, value))
@@ -200,8 +199,7 @@ impl Input {
     }
 }
 
-// just a helper to simplify parse_until! usage
-fn next_kv(input: &mut Input) -> Result<(String, Value), ParseError> {
+fn next_kv(input: &mut Input) -> Result<KV, ParseError> {
     input.next_kv()
 }
 
@@ -250,7 +248,7 @@ fn parse_f64(value: &str) -> Result<f64, ParseError> {
 }
 
 fn parse_task_call(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
-    let (name, _) = input.next_string()?;
+    let (name, marker) = input.next_string()?;
     let mut input_parameters = HashMap::new();
     if input.peek_string_constant("in")? {
         input.next()?;
@@ -262,18 +260,30 @@ fn parse_task_call(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
     Ok(ConcordFlowStep::TaskCall {
         name,
         input: input_parameters,
+        marker: marker.into(),
     })
+}
+
+impl From<yaml_rust2::scanner::Marker> for model::Marker {
+    fn from(value: yaml_rust2::scanner::Marker) -> Self {
+        model::Marker {
+            index: value.index(),
+            line: value.line(),
+            col: value.col(),
+        }
+    }
 }
 
 fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
     input.next_mapping_start()?;
 
     let step = match input.next()? {
-        (Event::Scalar(key, ..), _) if key == "log" => {
+        (Event::Scalar(key, ..), marker) if key == "log" => {
             let (msg, _) = input.next_string()?;
             ConcordFlowStep::TaskCall {
                 name: "log".to_owned(),
                 input: HashMap::from([("msg".to_owned(), Value::String(msg))]),
+                marker: marker.into(),
             }
         }
         (Event::Scalar(key, ..), _) if key == "task" => parse_task_call(input)?,
@@ -292,11 +302,15 @@ fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
 }
 
 fn parse_flow(input: &mut Input) -> Result<ConcordFlow, ParseError> {
-    let (name, _) = input.next_string()?;
+    let (name, marker) = input.next_string()?;
     input.next_sequence_start()?;
     let steps = parse_until!(input, Event::SequenceEnd, parse_step);
     input.next_sequence_end()?;
-    Ok(ConcordFlow { name, steps })
+    Ok(ConcordFlow {
+        name,
+        steps,
+        marker: marker.into(),
+    })
 }
 
 fn parse_flows(input: &mut Input) -> Result<Vec<ConcordFlow>, ParseError> {
@@ -307,18 +321,30 @@ fn parse_flows(input: &mut Input) -> Result<Vec<ConcordFlow>, ParseError> {
     Ok(result)
 }
 
+fn parse_configuration(input: &mut Input) -> Result<Vec<KV>, ParseError> {
+    input.next_string_constant("configuration")?;
+    input.next_mapping_start()?;
+    let result = parse_until!(input, Event::MappingEnd, next_kv);
+    Ok(result)
+}
+
 fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
     input.next_document_start()?;
     input.next_mapping_start()?;
 
     // top-level elements
+    let mut configuration = Vec::new();
     let mut flows = Vec::new();
-    if let Some((top_level_element, marker)) = input.peek_string()? {
+
+    while let Ok(Some((top_level_element, marker))) = input.peek_string() {
         match top_level_element.as_str() {
+            "configuration" => {
+                configuration.extend(parse_configuration(input)?);
+                input.next_mapping_end()?;
+            }
             "flows" => {
-                for flow in parse_flows(input)? {
-                    flows.push(flow);
-                }
+                flows.extend(parse_flows(input)?);
+                input.next_mapping_end()?;
             }
             element => {
                 return Err(ParseError {
@@ -330,10 +356,9 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
         }
     }
 
-    input.next_mapping_end()?;
     input.next_document_end()?;
 
-    Ok(ConcordDocument { flows })
+    Ok(ConcordDocument { configuration, flows })
 }
 
 pub fn parse_stream(input: &mut Input) -> Result<Vec<ConcordDocument>, ParseError> {
@@ -365,6 +390,28 @@ mod tests {
         assert_eq!(result[0].flows.len(), 1);
         assert_eq!(result[0].flows[0].name, "default");
         assert_eq!(result[0].flows[0].steps.len(), 1);
+    }
+
+    #[test]
+    fn configuration_block() {
+        let src = r#"
+        configuration:
+          foo: "bar"
+          baz: 123
+        flows:
+          default:
+            - log: "Hello, ${foo}! Hi, ${baz}!"
+        "#;
+
+        let mut input = Input::try_from(src).unwrap();
+        let result = parse_stream(&mut input).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].configuration[0].0, "foo");
+        assert!(matches!(result[0].configuration[0].1, Value::String(ref value) if value == "bar"));
+        assert_eq!(result[0].configuration[1].0, "baz");
+        assert!(matches!(result[0].configuration[1].1, Value::Float(ref value) if value == "123"));
+        assert_eq!(result[0].flows.len(), 1);
+        assert_eq!(result[0].flows[0].name, "default");
     }
 
     #[test]
@@ -455,14 +502,16 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].flows.len(), 1);
         assert_eq!(result[0].flows[0].steps.len(), 1);
+        assert_eq!(result[0].flows[0].marker.line, 3);
         assert!(match &result[0].flows[0].steps[0] {
-            ConcordFlowStep::TaskCall { name, input } => {
+            ConcordFlowStep::TaskCall { name, input, marker } => {
                 assert_eq!(name, "foo");
                 assert_eq!(input.len(), 4);
                 assert!(matches_float(input.get("a"), "1.23456789"));
                 assert!(matches!(input.get("b"), Some(Value::String(value)) if value == "Hello!"));
                 assert!(matches!(input.get("c"), Some(Value::Boolean(false))));
                 assert!(matches!(input.get("d"), Some(Value::Mapping(..))));
+                assert_eq!(marker.line, 4);
                 true
             }
         });
