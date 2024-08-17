@@ -4,6 +4,9 @@ extern crate concord_v2_parser;
 
 fn main() {
     let src = r#"
+    configuration:
+      arguments:
+        name: "World"
     flows:
       default:
         - log: "Hello, ${name}"
