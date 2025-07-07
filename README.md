@@ -10,4 +10,4 @@ Status:
   - [x] basic `flows` parsing
     - [x] task calls
     - [ ] everything else
-  - [ ] everything els
+  - [ ] everything else
