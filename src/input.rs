@@ -162,7 +162,7 @@ impl<T: Iterator<Item = char>> Input<T> {
 
     pub fn next_string(&mut self) -> Result<(String, Marker), ParseError> {
         match self.try_next()? {
-            (Event::Scalar(value, ..), marker) => Ok((value.to_owned(), marker)),
+            (Event::Scalar(value, ..), marker) => Ok((value, marker)),
             (ev, marker) => Err(ParseError {
                 location: Some((self.current_document_path(), marker).into()),
                 kind: ErrorKind::UnexpectedSyntax,
@@ -238,7 +238,7 @@ impl<T: Iterator<Item = char>> Input<T> {
 
     pub fn peek_string(&mut self) -> Result<Option<(String, Marker)>, ParseError> {
         match self.peek().cloned()? {
-            (Event::Scalar(value, ..), marker) => Ok(Some((value.to_owned(), marker))),
+            (Event::Scalar(value, ..), marker) => Ok(Some((value, marker))),
             (ev, marker) => Err(ParseError {
                 location: Some((self.current_document_path(), marker).into()),
                 kind: ErrorKind::UnexpectedSyntax,
