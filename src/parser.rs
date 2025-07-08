@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Display};
 
-use crate::model::{self, ConcordDocument, ConcordFlow, ConcordFlowStep, Value, KV};
+use crate::model::{ConcordDocument, Configuration, Flow, FlowStep, Location, Value, KV};
 
 pub type Event = yaml_rust2::Event;
 pub type Marker = yaml_rust2::scanner::Marker;
@@ -33,7 +33,7 @@ macro_rules! match_next {
         match $input.next()? {
             (ev @ $pat, marker) => Ok((ev, marker)),
             (ev, marker) => Err(ParseError {
-                marker: Some(marker.clone()),
+                location: Some(marker.into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected {}, got {ev:?}", stringify!($pat)),
             }),
@@ -59,7 +59,7 @@ impl Input {
     fn check_eof(&self) -> Result<(), ParseError> {
         if self.idx >= self.items.len() {
             Err(ParseError {
-                marker: None,
+                location: None,
                 kind: ErrorKind::ScanError,
                 msg: "EOF".to_string(),
             })
@@ -111,18 +111,18 @@ impl Input {
         match self.next()? {
             (Event::Scalar(value, ..), marker) => Ok((value.to_owned(), marker)),
             (ev, marker) => Err(ParseError {
-                marker: Some(marker),
+                location: Some(marker.into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected to peek a scalar, got {ev:?}"),
             }),
         }
     }
 
-    fn next_string_constant(&mut self, value: &str) -> Result<(), ParseError> {
+    fn next_string_constant(&mut self, value: &str) -> Result<Marker, ParseError> {
         match self.next()? {
-            (Event::Scalar(scalar, ..), _) if scalar == value => Ok(()),
+            (Event::Scalar(scalar, ..), marker) if scalar == value => Ok(marker),
             (ev, marker) => Err(ParseError {
-                marker: Some(marker),
+                location: Some(marker.into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected a string {value}, got {ev:?}"),
             }),
@@ -154,7 +154,7 @@ impl Input {
                         }
                     }
                     _ => Err(ParseError {
-                        marker: Some(marker),
+                        location: Some(marker.into()),
                         kind: ErrorKind::UnexpectedSyntax,
                         msg: format!("Unsupported value syntax, got \"{scalar}\" as {style:?}"),
                     }),
@@ -168,7 +168,7 @@ impl Input {
                 Ok((Value::Mapping(result), marker))
             }
             (ev, marker) => Err(ParseError {
-                marker: Some(marker),
+                location: Some(marker.into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected a value, got {ev:?}"),
             }),
@@ -184,7 +184,7 @@ impl Input {
         match self.peek()? {
             (Event::Scalar(value, ..), marker) => Ok(Some((value.to_owned(), *marker))),
             (ev, marker) => Err(ParseError {
-                marker: Some(*marker),
+                location: Some(marker.into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected to peek a scalar, got {ev:?}"),
             }),
@@ -211,21 +211,21 @@ pub enum ErrorKind {
 
 #[derive(Debug)]
 pub struct ParseError {
-    marker: Option<Marker>,
+    location: Option<Location>,
     kind: ErrorKind,
     msg: String,
 }
 
 impl Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} @ {:?}: {}", self.kind, self.marker, self.msg)
+        write!(f, "{:?} @ {:?}: {}", self.kind, self.location, self.msg)
     }
 }
 
 impl From<yaml_rust2::ScanError> for ParseError {
     fn from(value: yaml_rust2::ScanError) -> Self {
         Self {
-            marker: Some(*value.marker()),
+            location: Some(value.marker().into()),
             kind: ErrorKind::ScanError,
             msg: value.to_string(),
         }
@@ -240,14 +240,14 @@ fn parse_f64(value: &str) -> Result<f64, ParseError> {
         "-.inf" | "-.Inf" | "-.INF" => Ok(f64::NEG_INFINITY),
         ".nan" | "NaN" | ".NAN" => Ok(f64::NAN),
         _ => value.parse::<f64>().map_err(|e| ParseError {
-            marker: None,
+            location: None,
             kind: ErrorKind::UnexpectedSyntax,
             msg: format!("Invalid float number {value}: {e}"),
         }),
     }
 }
 
-fn parse_task_call(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
+fn parse_task_call(input: &mut Input) -> Result<FlowStep, ParseError> {
     let (name, marker) = input.next_string()?;
     let mut input_parameters = HashMap::new();
     if input.peek_string_constant("in")? {
@@ -257,16 +257,16 @@ fn parse_task_call(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
         input_parameters.extend(kvs);
         input.next_mapping_end()?;
     };
-    Ok(ConcordFlowStep::TaskCall {
+    Ok(FlowStep::TaskCall {
         name,
         input: input_parameters,
-        marker: marker.into(),
+        location: marker.into(),
     })
 }
 
-impl From<yaml_rust2::scanner::Marker> for model::Marker {
+impl From<yaml_rust2::scanner::Marker> for Location {
     fn from(value: yaml_rust2::scanner::Marker) -> Self {
-        model::Marker {
+        Location {
             index: value.index(),
             line: value.line(),
             col: value.col(),
@@ -274,22 +274,32 @@ impl From<yaml_rust2::scanner::Marker> for model::Marker {
     }
 }
 
-fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
+impl From<&yaml_rust2::scanner::Marker> for Location {
+    fn from(value: &yaml_rust2::scanner::Marker) -> Self {
+        Location {
+            index: value.index(),
+            line: value.line(),
+            col: value.col(),
+        }
+    }
+}
+
+fn parse_step(input: &mut Input) -> Result<FlowStep, ParseError> {
     input.next_mapping_start()?;
 
     let step = match input.next()? {
         (Event::Scalar(key, ..), marker) if key == "log" => {
             let (msg, _) = input.next_string()?;
-            ConcordFlowStep::TaskCall {
+            FlowStep::TaskCall {
+                location: marker.into(),
                 name: "log".to_owned(),
                 input: HashMap::from([("msg".to_owned(), Value::String(msg))]),
-                marker: marker.into(),
             }
         }
         (Event::Scalar(key, ..), _) if key == "task" => parse_task_call(input)?,
         (ev, marker) => {
             return Err(ParseError {
-                marker: Some(marker),
+                location: Some(marker.into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected a flow step, got {ev:?}"),
             })
@@ -301,19 +311,19 @@ fn parse_step(input: &mut Input) -> Result<ConcordFlowStep, ParseError> {
     Ok(step)
 }
 
-fn parse_flow(input: &mut Input) -> Result<ConcordFlow, ParseError> {
+fn parse_flow(input: &mut Input) -> Result<Flow, ParseError> {
     let (name, marker) = input.next_string()?;
     input.next_sequence_start()?;
     let steps = parse_until!(input, Event::SequenceEnd, parse_step);
     input.next_sequence_end()?;
-    Ok(ConcordFlow {
+    Ok(Flow {
+        location: marker.into(),
         name,
         steps,
-        marker: marker.into(),
     })
 }
 
-fn parse_flows(input: &mut Input) -> Result<Vec<ConcordFlow>, ParseError> {
+fn parse_flows(input: &mut Input) -> Result<Vec<Flow>, ParseError> {
     input.next_string_constant("flows")?;
     input.next_mapping_start()?;
     let result = parse_until!(input, Event::MappingEnd, parse_flow);
@@ -321,11 +331,14 @@ fn parse_flows(input: &mut Input) -> Result<Vec<ConcordFlow>, ParseError> {
     Ok(result)
 }
 
-fn parse_configuration(input: &mut Input) -> Result<Vec<KV>, ParseError> {
-    input.next_string_constant("configuration")?;
+fn parse_configuration(input: &mut Input) -> Result<Configuration, ParseError> {
+    let marker = input.next_string_constant("configuration")?;
     input.next_mapping_start()?;
-    let result = parse_until!(input, Event::MappingEnd, next_kv);
-    Ok(result)
+    let values = parse_until!(input, Event::MappingEnd, next_kv);
+    Ok(Configuration {
+        location: marker.into(),
+        values,
+    })
 }
 
 fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
@@ -333,13 +346,13 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
     input.next_mapping_start()?;
 
     // top-level elements
-    let mut configuration = Vec::new();
+    let mut configuration = None;
     let mut flows = Vec::new();
 
     while let Ok(Some((top_level_element, marker))) = input.peek_string() {
         match top_level_element.as_str() {
             "configuration" => {
-                configuration.extend(parse_configuration(input)?);
+                configuration = Some(parse_configuration(input)?);
                 input.next_mapping_end()?;
             }
             "flows" => {
@@ -348,7 +361,7 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
             }
             element => {
                 return Err(ParseError {
-                    marker: Some(marker),
+                    location: Some(marker.into()),
                     kind: ErrorKind::UnexpectedSyntax,
                     msg: format!("Unexpected top-level element {element}"),
                 })
@@ -406,10 +419,11 @@ mod tests {
         let mut input = Input::try_from(src).unwrap();
         let result = parse_stream(&mut input).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].configuration[0].0, "foo");
-        assert!(matches!(result[0].configuration[0].1, Value::String(ref value) if value == "bar"));
-        assert_eq!(result[0].configuration[1].0, "baz");
-        assert!(matches!(result[0].configuration[1].1, Value::Float(ref value) if value == "123"));
+        let configuration = result[0].configuration.as_ref().unwrap();
+        assert_eq!(configuration.values[0].0, "foo");
+        assert!(matches!(configuration.values[0].1, Value::String(ref value) if value == "bar"));
+        assert_eq!(configuration.values[1].0, "baz");
+        assert!(matches!(configuration.values[1].1, Value::Float(ref value) if value == "123"));
         assert_eq!(result[0].flows.len(), 1);
         assert_eq!(result[0].flows[0].name, "default");
     }
@@ -478,7 +492,13 @@ mod tests {
 
         let mut input = Input::try_from(src).unwrap();
         let result = parse_stream(&mut input);
-        assert!(matches!(result, Err(ParseError { marker: Some(..), .. })));
+        assert!(matches!(
+            result,
+            Err(ParseError {
+                location: Some(..),
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -502,9 +522,13 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].flows.len(), 1);
         assert_eq!(result[0].flows[0].steps.len(), 1);
-        assert_eq!(result[0].flows[0].marker.line, 3);
+        assert_eq!(result[0].flows[0].location.line, 3);
         assert!(match &result[0].flows[0].steps[0] {
-            ConcordFlowStep::TaskCall { name, input, marker } => {
+            FlowStep::TaskCall {
+                name,
+                input,
+                location: marker,
+            } => {
                 assert_eq!(name, "foo");
                 assert_eq!(input.len(), 4);
                 assert!(matches_float(input.get("a"), "1.23456789"));

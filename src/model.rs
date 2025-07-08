@@ -13,30 +13,36 @@ pub enum Value {
 pub type KV = (String, Value);
 
 #[derive(Debug)]
-pub struct Marker {
+pub struct Location {
     pub index: usize,
     pub line: usize,
     pub col: usize,
 }
 
 #[derive(Debug)]
-pub enum ConcordFlowStep {
+pub enum FlowStep {
     TaskCall {
-        marker: Marker,
+        location: Location,
         name: String,
         input: HashMap<String, Value>,
     },
 }
 
 #[derive(Debug)]
-pub struct ConcordFlow {
+pub struct Flow {
+    pub location: Location,
     pub name: String,
-    pub steps: Vec<ConcordFlowStep>,
-    pub marker: Marker,
+    pub steps: Vec<FlowStep>,
+}
+
+#[derive(Debug)]
+pub struct Configuration {
+    pub location: Location,
+    pub values: Vec<KV>,
 }
 
 #[derive(Debug)]
 pub struct ConcordDocument {
-    pub configuration: Vec<KV>,
-    pub flows: Vec<ConcordFlow>,
+    pub configuration: Option<Configuration>,
+    pub flows: Vec<Flow>,
 }
