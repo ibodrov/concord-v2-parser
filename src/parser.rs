@@ -1,36 +1,25 @@
-use std::fmt::Display;
-
 use crate::model::{
     ConcordDocument, Configuration, DocumentPath, Flow, FlowStep, Form, FormField, Location, Value, KV,
 };
+use std::fmt::Display;
+use std::str::Chars;
 
 pub type Event = yaml_rust2::Event;
 pub type Marker = yaml_rust2::scanner::Marker;
 
-pub struct Input {
+pub struct Input<T: Iterator<Item = char>> {
     document_path: Vec<String>,
-    items: Vec<(Event, Marker)>,
-    idx: usize,
+    yaml: yaml_rust2::parser::Parser<T>,
 }
 
-impl TryFrom<&str> for Input {
+impl<'a> TryFrom<&'a str> for Input<Chars<'a>> {
     type Error = ParseError;
 
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let mut parser = yaml_rust2::parser::Parser::new(value.chars());
-        let mut items = Vec::new();
-        loop {
-            let (ev, marker) = parser.next_token()?;
-            let done = ev == Event::StreamEnd;
-            items.push((ev, marker));
-            if done {
-                break;
-            }
-        }
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let yaml = yaml_rust2::parser::Parser::new(value.chars());
         Ok(Input {
             document_path: Vec::new(),
-            items,
-            idx: 0,
+            yaml,
         })
     }
 }
@@ -62,7 +51,7 @@ macro_rules! parse_until {
     }};
 }
 
-impl Input {
+impl<T: Iterator<Item = char>> Input<T> {
     fn enter_context(&mut self, name: &str) {
         self.document_path.push(name.to_owned());
     }
@@ -75,22 +64,8 @@ impl Input {
         DocumentPath::new(&self.document_path)
     }
 
-    fn check_eof(&self) -> Result<(), ParseError> {
-        if self.idx >= self.items.len() {
-            Err(ParseError {
-                location: None,
-                kind: ErrorKind::ScanError,
-                msg: "EOF".to_string(),
-            })
-        } else {
-            Ok(())
-        }
-    }
-
     fn next(&mut self) -> Result<(Event, Marker), ParseError> {
-        self.check_eof()?;
-        let (event, marker) = &self.items[self.idx];
-        self.idx += 1;
+        let (event, marker) = &self.yaml.next_token()?;
         Ok((event.clone(), *marker))
     }
 
@@ -205,14 +180,14 @@ impl Input {
         }
     }
 
-    fn peek(&self) -> Result<&(Event, Marker), ParseError> {
-        self.check_eof()?;
-        Ok(&self.items[self.idx])
+    fn peek(&mut self) -> Result<&(Event, Marker), ParseError> {
+        let result = self.yaml.peek()?;
+        Ok(result)
     }
 
     fn peek_string(&mut self) -> Result<Option<(String, Marker)>, ParseError> {
-        match self.peek()? {
-            (Event::Scalar(value, ..), marker) => Ok(Some((value.to_owned(), *marker))),
+        match self.peek().cloned()? {
+            (Event::Scalar(value, ..), marker) => Ok(Some((value.to_owned(), marker))),
             (ev, marker) => Err(ParseError {
                 location: Some((self.current_document_path(), marker).into()),
                 kind: ErrorKind::UnexpectedSyntax,
@@ -222,11 +197,11 @@ impl Input {
     }
 }
 
-fn next_value(input: &mut Input) -> Result<Value, ParseError> {
+fn next_value<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Value, ParseError> {
     input.next_value()
 }
 
-fn next_kv(input: &mut Input) -> Result<KV, ParseError> {
+fn next_kv<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<KV, ParseError> {
     input.next_kv()
 }
 
@@ -274,21 +249,21 @@ fn parse_f64(value: &str) -> Result<f64, ParseError> {
     }
 }
 
-fn parse_in_parameters(input: &mut Input) -> Result<Value, ParseError> {
+fn parse_in_parameters<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Value, ParseError> {
     input.enter_context("in parameters");
     let result = input.next_value()?;
     input.leave_context();
     Ok(result)
 }
 
-fn parse_out_parameters(input: &mut Input) -> Result<Value, ParseError> {
+fn parse_out_parameters<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Value, ParseError> {
     input.enter_context("out parameters");
     let result = input.next_value()?;
     input.leave_context();
     Ok(result)
 }
 
-fn parse_task_call(input: &mut Input) -> Result<FlowStep, ParseError> {
+fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
     let (name, marker) = input.next_string()?;
     input.enter_context(&format!("'{name}' task call"));
     let mut task_input = None;
@@ -316,7 +291,10 @@ fn parse_task_call(input: &mut Input) -> Result<FlowStep, ParseError> {
     })
 }
 
-fn parse_log_call(input: &mut Input, task_marker: Marker) -> Result<FlowStep, ParseError> {
+fn parse_log_call<T: Iterator<Item = char>>(
+    input: &mut Input<T>,
+    task_marker: Marker,
+) -> Result<FlowStep, ParseError> {
     input.enter_context("log step");
     let (msg, msg_marker) = input.next_string()?;
     let task_input = Value::Mapping(vec![KV {
@@ -355,7 +333,7 @@ impl From<(DocumentPath, &yaml_rust2::scanner::Marker)> for Location {
     }
 }
 
-fn parse_form_field(input: &mut Input) -> Result<FormField, ParseError> {
+fn parse_form_field<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FormField, ParseError> {
     input.next_mapping_start()?;
 
     let (name, marker) = input.next_string()?;
@@ -374,7 +352,7 @@ fn parse_form_field(input: &mut Input) -> Result<FormField, ParseError> {
     })
 }
 
-fn parse_form(input: &mut Input) -> Result<Form, ParseError> {
+fn parse_form<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Form, ParseError> {
     let (name, marker) = input.next_string()?;
     input.enter_context(&format!("'{name}' form"));
 
@@ -391,7 +369,7 @@ fn parse_form(input: &mut Input) -> Result<Form, ParseError> {
     })
 }
 
-fn parse_forms(input: &mut Input) -> Result<Vec<Form>, ParseError> {
+fn parse_forms<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<Form>, ParseError> {
     input.enter_context("forms");
 
     input.next_string_constant("forms")?;
@@ -404,7 +382,7 @@ fn parse_forms(input: &mut Input) -> Result<Vec<Form>, ParseError> {
     Ok(result)
 }
 
-fn parse_step(input: &mut Input) -> Result<FlowStep, ParseError> {
+fn parse_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
     input.next_mapping_start()?;
 
     let step = match input.next()? {
@@ -424,7 +402,7 @@ fn parse_step(input: &mut Input) -> Result<FlowStep, ParseError> {
     Ok(step)
 }
 
-fn parse_flow(input: &mut Input) -> Result<Flow, ParseError> {
+fn parse_flow<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flow, ParseError> {
     let (name, marker) = input.next_string()?;
     input.enter_context(&format!("'{name}' flow"));
 
@@ -441,7 +419,7 @@ fn parse_flow(input: &mut Input) -> Result<Flow, ParseError> {
     })
 }
 
-fn parse_flows(input: &mut Input) -> Result<Vec<Flow>, ParseError> {
+fn parse_flows<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<Flow>, ParseError> {
     input.enter_context("flows");
 
     input.next_string_constant("flows")?;
@@ -454,7 +432,7 @@ fn parse_flows(input: &mut Input) -> Result<Vec<Flow>, ParseError> {
     Ok(result)
 }
 
-fn parse_configuration(input: &mut Input) -> Result<Configuration, ParseError> {
+fn parse_configuration<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Configuration, ParseError> {
     input.enter_context("configuration");
 
     let marker = input.next_string_constant("configuration")?;
@@ -470,7 +448,7 @@ fn parse_configuration(input: &mut Input) -> Result<Configuration, ParseError> {
     })
 }
 
-fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
+fn parse_document<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<ConcordDocument, ParseError> {
     input.enter_context("document");
 
     input.next_document_start()?;
@@ -514,7 +492,9 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
     })
 }
 
-pub fn parse_stream(input: &mut Input) -> Result<Vec<ConcordDocument>, ParseError> {
+pub fn parse_stream<T: Iterator<Item = char>>(
+    input: &mut Input<T>,
+) -> Result<Vec<ConcordDocument>, ParseError> {
     input.next_stream_start()?;
     let result = parse_until!(input, Event::StreamEnd, parse_document);
     input.next_stream_end()?;
