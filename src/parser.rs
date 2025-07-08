@@ -18,8 +18,8 @@ fn parse_out_parameters<T: Iterator<Item = char>>(input: &mut Input<T>) -> Resul
 }
 
 fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
-    let (name, marker) = input.next_string()?;
-    input.enter_context(&format!("'{name}' task call"));
+    let (task_name, marker) = input.next_string()?;
+    input.enter_context(&format!("'{task_name}' task call"));
     let mut task_input = None;
     let mut task_output = None;
     while let Ok(Some((element, marker))) = input.peek_string() {
@@ -38,7 +38,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flo
     }
     input.leave_context();
     Ok(FlowStep::TaskCall {
-        name,
+        task_name,
         input: task_input,
         output: task_output,
         location: (input.current_document_path(), marker).into(),
@@ -59,7 +59,7 @@ fn parse_log_call<T: Iterator<Item = char>>(
     input.leave_context();
     Ok(FlowStep::TaskCall {
         location: (input.current_document_path(), task_marker).into(),
-        name: "log".to_owned(),
+        task_name: "log".to_owned(),
         input: Some(task_input),
         output: None,
     })
@@ -186,7 +186,6 @@ fn parse_document<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Conc
     input.next_document_start()?;
     input.next_mapping_start()?;
 
-    // top-level elements
     let mut configuration = None;
     let mut flows = None;
     let mut forms = None;

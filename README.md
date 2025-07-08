@@ -9,7 +9,20 @@ Status:
     - [ ] structured parsing (`runtime`, `debug` and other standard parameters)
   - [x] basic `flows` parsing
     - [x] log calls
-    - [x] task calls
+    - [x] basic `task` calls
+        - [x] `in`
+        - [x] `out`
+        - [ ] `error`
+        - [ ] `ignoreErrors`
+        - [ ] `loop`
+        - [ ] `meta`
+        - [ ] `name`
+        - [ ] `retry`
     - [ ] everything else
-  - [x] `forms` parsing
+  - [x] basic `forms` parsing
+    - [ ] structured parsing of field options
+  - [ ] `triggers`
+  - [ ] `resources`
+  - [ ] `imports`
+  - [ ] `publicFlows`
   - [ ] everything else

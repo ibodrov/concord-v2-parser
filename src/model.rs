@@ -68,7 +68,7 @@ pub struct Configuration {
 pub enum FlowStep {
     TaskCall {
         location: Location,
-        name: String,
+        task_name: String,
         input: Option<Value>,
         output: Option<Value>,
     },
