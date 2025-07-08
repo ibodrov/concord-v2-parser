@@ -1,9 +1,31 @@
 use crate::error::{ErrorKind, ParseError};
-use crate::model::{DocumentPath, Value, KV};
+use crate::model::{DocumentPath, Location, Value, KV};
 use std::str::Chars;
 
 pub type Event = yaml_rust2::Event;
 pub type Marker = yaml_rust2::scanner::Marker;
+
+impl From<(DocumentPath, Marker)> for Location {
+    fn from((path, marker): (DocumentPath, Marker)) -> Self {
+        Location {
+            path,
+            index: marker.index(),
+            line: marker.line(),
+            col: marker.col(),
+        }
+    }
+}
+
+impl From<(DocumentPath, &Marker)> for Location {
+    fn from((path, marker): (DocumentPath, &Marker)) -> Self {
+        Location {
+            path,
+            index: marker.index(),
+            line: marker.line(),
+            col: marker.col(),
+        }
+    }
+}
 
 // from https://github.com/chyh1990/yaml-rust/blob/master/src/yaml.rs
 // with minor changes (Option -> Result)

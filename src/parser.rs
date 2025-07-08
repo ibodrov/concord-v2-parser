@@ -1,8 +1,6 @@
 use crate::error::{ErrorKind, ParseError};
 use crate::input::{next_kv, Event, Input, Marker};
-use crate::model::{
-    ConcordDocument, Configuration, DocumentPath, Flow, FlowStep, Form, FormField, Location, Value, KV,
-};
+use crate::model::{ConcordDocument, Configuration, Flow, FlowStep, Form, FormField, Value, KV};
 use crate::parse_until;
 
 fn parse_in_parameters<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Value, ParseError> {
@@ -65,28 +63,6 @@ fn parse_log_call<T: Iterator<Item = char>>(
         input: Some(task_input),
         output: None,
     })
-}
-
-impl From<(DocumentPath, yaml_rust2::scanner::Marker)> for Location {
-    fn from((path, marker): (DocumentPath, yaml_rust2::scanner::Marker)) -> Self {
-        Location {
-            path,
-            index: marker.index(),
-            line: marker.line(),
-            col: marker.col(),
-        }
-    }
-}
-
-impl From<(DocumentPath, &yaml_rust2::scanner::Marker)> for Location {
-    fn from((path, marker): (DocumentPath, &yaml_rust2::scanner::Marker)) -> Self {
-        Location {
-            path,
-            index: marker.index(),
-            line: marker.line(),
-            col: marker.col(),
-        }
-    }
 }
 
 fn parse_form_field<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FormField, ParseError> {
