@@ -131,7 +131,7 @@ impl Input {
 
     fn next_kv(&mut self) -> Result<KV, ParseError> {
         let (key, marker) = self.next_string()?;
-        let (value, _) = self.next_value()?;
+        let value = self.next_value()?;
         Ok(KV {
             location: marker.into(),
             key,
@@ -139,22 +139,22 @@ impl Input {
         })
     }
 
-    fn next_value(&mut self) -> Result<(Value, Marker), ParseError> {
+    fn next_value(&mut self) -> Result<Value, ParseError> {
         match self.next()? {
             (Event::Scalar(scalar, style, ..), marker) => {
                 use yaml_rust2::scanner::TScalarStyle::*;
                 match style {
-                    SingleQuoted | DoubleQuoted => Ok((Value::String(scalar), marker)),
+                    SingleQuoted | DoubleQuoted => Ok(Value::String(scalar)),
                     Plain => {
                         if parse_f64(&scalar).is_ok() {
-                            Ok((Value::Float(scalar), marker))
+                            Ok(Value::Float(scalar))
                         } else if let Ok(value) = scalar.parse::<i64>() {
-                            Ok((Value::Integer(value), marker))
+                            Ok(Value::Integer(value))
                         } else if let Ok(value) = scalar.parse::<bool>() {
                             // TODO handle "yes/no", etc
-                            Ok((Value::Boolean(value), marker))
+                            Ok(Value::Boolean(value))
                         } else {
-                            Ok((Value::String(scalar), marker))
+                            Ok(Value::String(scalar))
                         }
                     }
                     _ => Err(ParseError {
@@ -164,12 +164,17 @@ impl Input {
                     }),
                 }
             }
-            (Event::MappingStart(..), marker) => {
+            (Event::SequenceStart(..), ..) => {
+                let result = parse_until!(self, Event::SequenceEnd, next_value);
+                self.next_sequence_end()?;
+                Ok(Value::Array(result))
+            }
+            (Event::MappingStart(..), ..) => {
                 let result = parse_until!(self, Event::MappingEnd, next_kv)
                     .into_iter()
                     .collect();
                 self.next_mapping_end()?;
-                Ok((Value::Mapping(result), marker))
+                Ok(Value::Mapping(result))
             }
             (ev, marker) => Err(ParseError {
                 location: Some(marker.into()),
@@ -201,6 +206,10 @@ impl Input {
             _ => Ok(false),
         }
     }
+}
+
+fn next_value(input: &mut Input) -> Result<Value, ParseError> {
+    input.next_value()
 }
 
 fn next_kv(input: &mut Input) -> Result<KV, ParseError> {
@@ -343,6 +352,7 @@ fn parse_configuration(input: &mut Input) -> Result<Configuration, ParseError> {
     let marker = input.next_string_constant("configuration")?;
     input.next_mapping_start()?;
     let values = parse_until!(input, Event::MappingEnd, next_kv);
+    input.next_mapping_end()?;
     Ok(Configuration {
         location: marker.into(),
         values,
@@ -387,165 +397,4 @@ pub fn parse_stream(input: &mut Input) -> Result<Vec<ConcordDocument>, ParseErro
     let result = parse_until!(input, Event::StreamEnd, parse_document);
     input.next_stream_end()?;
     Ok(result)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn matches_float(value: &Value, expected: &str) -> bool {
-        matches!(value, Value::Float(value) if value == expected)
-    }
-
-    #[test]
-    fn hello_world() {
-        let src = r#"
-        flows:
-          default:
-            - log: "Hello!"
-        "#;
-
-        let mut input = Input::try_from(src).unwrap();
-        let result = parse_stream(&mut input).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].flows.len(), 1);
-        assert_eq!(result[0].flows[0].name, "default");
-        assert_eq!(result[0].flows[0].steps.len(), 1);
-    }
-
-    #[test]
-    fn configuration_block() {
-        let src = r#"
-        configuration:
-          foo: "bar"
-          baz: 123
-        flows:
-          default:
-            - log: "Hello, ${foo}! Hi, ${baz}!"
-        "#;
-
-        let mut input = Input::try_from(src).unwrap();
-        let result = parse_stream(&mut input).unwrap();
-        assert_eq!(result.len(), 1);
-        let configuration = result[0].configuration.as_ref().unwrap();
-        assert_eq!(configuration.values[0].key, "foo");
-        assert!(matches!(configuration.values[0].value, Value::String(ref value) if value == "bar"));
-        assert_eq!(configuration.values[1].key, "baz");
-        assert!(matches!(configuration.values[1].value, Value::Float(ref value) if value == "123"));
-        assert_eq!(result[0].flows.len(), 1);
-        assert_eq!(result[0].flows[0].name, "default");
-    }
-
-    #[test]
-    fn multiple_flows() {
-        let src = r#"
-        flows:
-          default:
-            - log: "Hello!"
-          another_one:
-            - log: "Yo!"
-        "#;
-
-        let mut input = Input::try_from(src).unwrap();
-        let result = parse_stream(&mut input).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].flows.len(), 2);
-        assert_eq!(result[0].flows[0].name, "default");
-        assert_eq!(result[0].flows[0].steps.len(), 1);
-        assert_eq!(result[0].flows[1].name, "another_one");
-        assert_eq!(result[0].flows[1].steps.len(), 1);
-    }
-
-    #[test]
-    fn multiple_docs() {
-        let src = "---\nflows:\n  default:\n    - log: \"Hello!\"\n---\nflows:\n  another_one:\n    - log: \"Bye!\"";
-
-        let mut input = Input::try_from(src).unwrap();
-        let result = parse_stream(&mut input).unwrap();
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0].flows.len(), 1);
-        assert_eq!(result[0].flows[0].name, "default");
-        assert_eq!(result[0].flows[0].steps.len(), 1);
-        assert_eq!(result[1].flows.len(), 1);
-        assert_eq!(result[1].flows[0].name, "another_one");
-        assert_eq!(result[1].flows[0].steps.len(), 1);
-    }
-
-    #[test]
-    fn multiple_steps() {
-        let src = r#"
-        flows:
-          default:
-            - log: "Hello!"
-            - log: "Bye!"
-        "#;
-
-        let mut input = Input::try_from(src).unwrap();
-        let result = parse_stream(&mut input).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].flows.len(), 1);
-        assert_eq!(result[0].flows[0].name, "default");
-        assert_eq!(result[0].flows[0].steps.len(), 2);
-    }
-
-    #[test]
-    fn invalid_top_level_element() {
-        let src = r#"
-        flows:
-          default:
-            - log: "Hello!"
-        
-        gizmos: ["a", 1, false]
-        "#;
-
-        let mut input = Input::try_from(src).unwrap();
-        let result = parse_stream(&mut input);
-        assert!(matches!(
-            result,
-            Err(ParseError {
-                location: Some(..),
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn task_call() {
-        let src = r#"
-        flows:
-          default:
-            - task: foo
-              in:
-                a: 1.23456789
-                b: "Hello!"
-                c: false
-                d:
-                  x:
-                    y:
-                      z: true
-        "#;
-
-        let mut input = Input::try_from(src).unwrap();
-        let result = parse_stream(&mut input).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].flows.len(), 1);
-        assert_eq!(result[0].flows[0].steps.len(), 1);
-        assert_eq!(result[0].flows[0].location.line, 3);
-        assert!(match &result[0].flows[0].steps[0] {
-            FlowStep::TaskCall {
-                name,
-                input,
-                location,
-            } => {
-                assert_eq!(name, "foo");
-                assert_eq!(input.len(), 4);
-                assert!(matches_float(&input[0].value, "1.23456789"));
-                assert!(matches!(&input[1].value, Value::String(value) if value == "Hello!"));
-                assert!(matches!(&input[2].value, Value::Boolean(false)));
-                assert!(matches!(&input[3].value, Value::Mapping(nested) if nested[0].location.line == 10));
-                assert_eq!(location.line, 4);
-                true
-            }
-        });
-    }
 }

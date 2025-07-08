@@ -1,0 +1,4 @@
+configuration:
+  dependencies:
+    - mvn://com.acme.concord:awesome-task:4.2.0
+    - https://acme.com/awesome-zip.zip
