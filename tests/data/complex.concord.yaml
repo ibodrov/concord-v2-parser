@@ -27,4 +27,3 @@ flows:
     - task: awesome-task
       out:
         result: ${result.foo}
-

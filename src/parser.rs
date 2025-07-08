@@ -1,11 +1,12 @@
 use std::fmt::Display;
 
-use crate::model::{ConcordDocument, Configuration, Flow, FlowStep, Location, Value, KV};
+use crate::model::{ConcordDocument, Configuration, DocumentPath, Flow, FlowStep, Location, Value, KV};
 
 pub type Event = yaml_rust2::Event;
 pub type Marker = yaml_rust2::scanner::Marker;
 
 pub struct Input {
+    document_path: Vec<String>,
     items: Vec<(Event, Marker)>,
     idx: usize,
 }
@@ -25,7 +26,11 @@ impl TryFrom<&str> for Input {
                 break;
             }
         }
-        Ok(Input { items, idx: 0 })
+        Ok(Input {
+            document_path: Vec::new(),
+            items,
+            idx: 0,
+        })
     }
 }
 
@@ -34,7 +39,7 @@ macro_rules! match_next {
         match $input.next()? {
             (ev @ $pat, marker) => Ok((ev, marker)),
             (ev, marker) => Err(ParseError {
-                location: Some(marker.into()),
+                location: Some(($input.current_document_path(), marker).into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected {}, got {ev:?}", stringify!($pat)),
             }),
@@ -57,6 +62,18 @@ macro_rules! parse_until {
 }
 
 impl Input {
+    fn enter_context(&mut self, name: &str) {
+        self.document_path.push(name.to_owned());
+    }
+
+    fn leave_context(&mut self) {
+        self.document_path.pop();
+    }
+
+    fn current_document_path(&self) -> DocumentPath {
+        DocumentPath::new(&self.document_path)
+    }
+
     fn check_eof(&self) -> Result<(), ParseError> {
         if self.idx >= self.items.len() {
             Err(ParseError {
@@ -112,7 +129,7 @@ impl Input {
         match self.next()? {
             (Event::Scalar(value, ..), marker) => Ok((value.to_owned(), marker)),
             (ev, marker) => Err(ParseError {
-                location: Some(marker.into()),
+                location: Some((self.current_document_path(), marker).into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected to peek a scalar, got {ev:?}"),
             }),
@@ -123,7 +140,7 @@ impl Input {
         match self.next()? {
             (Event::Scalar(scalar, ..), marker) if scalar == value => Ok(marker),
             (ev, marker) => Err(ParseError {
-                location: Some(marker.into()),
+                location: Some((self.current_document_path(), marker).into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected a string {value}, got {ev:?}"),
             }),
@@ -132,9 +149,11 @@ impl Input {
 
     fn next_kv(&mut self) -> Result<KV, ParseError> {
         let (key, marker) = self.next_string()?;
+        self.enter_context(&format!("'{key}'"));
         let value = self.next_value()?;
+        self.leave_context();
         Ok(KV {
-            location: marker.into(),
+            location: (self.current_document_path(), marker).into(),
             key,
             value,
         })
@@ -159,7 +178,7 @@ impl Input {
                         }
                     }
                     _ => Err(ParseError {
-                        location: Some(marker.into()),
+                        location: Some((self.current_document_path(), marker).into()),
                         kind: ErrorKind::UnexpectedSyntax,
                         msg: format!("Unsupported value syntax, got \"{scalar}\" as {style:?}"),
                     }),
@@ -178,14 +197,14 @@ impl Input {
                 Ok(Value::Mapping(result))
             }
             (ev, marker) => Err(ParseError {
-                location: Some(marker.into()),
+                location: Some((self.current_document_path(), marker).into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected a value, got {ev:?}"),
             }),
         }
     }
 
-    fn peek(&mut self) -> Result<&(Event, Marker), ParseError> {
+    fn peek(&self) -> Result<&(Event, Marker), ParseError> {
         self.check_eof()?;
         Ok(&self.items[self.idx])
     }
@@ -194,7 +213,7 @@ impl Input {
         match self.peek()? {
             (Event::Scalar(value, ..), marker) => Ok(Some((value.to_owned(), *marker))),
             (ev, marker) => Err(ParseError {
-                location: Some(marker.into()),
+                location: Some((self.current_document_path(), marker).into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected to peek a scalar, got {ev:?}"),
             }),
@@ -232,7 +251,7 @@ impl Display for ParseError {
 impl From<yaml_rust2::ScanError> for ParseError {
     fn from(value: yaml_rust2::ScanError) -> Self {
         Self {
-            location: Some(value.marker().into()),
+            location: Some((DocumentPath::none(), value.marker()).into()),
             kind: ErrorKind::ScanError,
             msg: value.to_string(),
         }
@@ -254,63 +273,83 @@ fn parse_f64(value: &str) -> Result<f64, ParseError> {
     }
 }
 
+fn parse_in_parameters(input: &mut Input) -> Result<Value, ParseError> {
+    input.enter_context("in parameters");
+    let result = input.next_value()?;
+    input.leave_context();
+    Ok(result)
+}
+
+fn parse_out_parameters(input: &mut Input) -> Result<Value, ParseError> {
+    input.enter_context("out parameters");
+    let result = input.next_value()?;
+    input.leave_context();
+    Ok(result)
+}
+
 fn parse_task_call(input: &mut Input) -> Result<FlowStep, ParseError> {
     let (name, marker) = input.next_string()?;
+    input.enter_context(&format!("'{name}' task call"));
     let mut task_input = None;
     let mut task_output = None;
     while let Ok(Some((element, marker))) = input.peek_string() {
         input.next()?;
         match element.as_str() {
-            "in" => task_input = Some(input.next_value()?),
-            "out" => task_output = Some(input.next_value()?),
+            "in" => task_input = Some(parse_in_parameters(input)?),
+            "out" => task_output = Some(parse_out_parameters(input)?),
             element => {
                 return Err(ParseError {
-                    location: Some(marker.into()),
+                    location: Some((input.current_document_path(), marker).into()),
                     kind: ErrorKind::UnexpectedSyntax,
                     msg: format!("Unexpected task call element {element}"),
                 })
             }
         }
     }
+    input.leave_context();
     Ok(FlowStep::TaskCall {
         name,
         input: task_input,
         output: task_output,
-        location: marker.into(),
+        location: (input.current_document_path(), marker).into(),
     })
 }
 
 fn parse_log_call(input: &mut Input, task_marker: Marker) -> Result<FlowStep, ParseError> {
+    input.enter_context("log step");
     let (msg, msg_marker) = input.next_string()?;
-    let input = Value::Mapping(vec![KV {
-        location: msg_marker.into(),
+    let task_input = Value::Mapping(vec![KV {
+        location: (input.current_document_path(), msg_marker).into(),
         key: "msg".to_owned(),
         value: Value::String(msg),
     }]);
+    input.leave_context();
     Ok(FlowStep::TaskCall {
-        location: task_marker.into(),
+        location: (input.current_document_path(), task_marker).into(),
         name: "log".to_owned(),
-        input: Some(input),
+        input: Some(task_input),
         output: None,
     })
 }
 
-impl From<yaml_rust2::scanner::Marker> for Location {
-    fn from(value: yaml_rust2::scanner::Marker) -> Self {
+impl From<(DocumentPath, yaml_rust2::scanner::Marker)> for Location {
+    fn from((path, marker): (DocumentPath, yaml_rust2::scanner::Marker)) -> Self {
         Location {
-            index: value.index(),
-            line: value.line(),
-            col: value.col(),
+            path,
+            index: marker.index(),
+            line: marker.line(),
+            col: marker.col(),
         }
     }
 }
 
-impl From<&yaml_rust2::scanner::Marker> for Location {
-    fn from(value: &yaml_rust2::scanner::Marker) -> Self {
+impl From<(DocumentPath, &yaml_rust2::scanner::Marker)> for Location {
+    fn from((path, marker): (DocumentPath, &yaml_rust2::scanner::Marker)) -> Self {
         Location {
-            index: value.index(),
-            line: value.line(),
-            col: value.col(),
+            path,
+            index: marker.index(),
+            line: marker.line(),
+            col: marker.col(),
         }
     }
 }
@@ -323,7 +362,7 @@ fn parse_step(input: &mut Input) -> Result<FlowStep, ParseError> {
         (Event::Scalar(key, ..), _) if key == "task" => parse_task_call(input)?,
         (ev, marker) => {
             return Err(ParseError {
-                location: Some(marker.into()),
+                location: Some((input.current_document_path(), marker).into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected a flow step, got {ev:?}"),
             })
@@ -337,36 +376,53 @@ fn parse_step(input: &mut Input) -> Result<FlowStep, ParseError> {
 
 fn parse_flow(input: &mut Input) -> Result<Flow, ParseError> {
     let (name, marker) = input.next_string()?;
+    input.enter_context(&format!("'{name}' flow"));
+
     input.next_sequence_start()?;
     let steps = parse_until!(input, Event::SequenceEnd, parse_step);
     input.next_sequence_end()?;
+
+    input.leave_context();
+
     Ok(Flow {
-        location: marker.into(),
+        location: (input.current_document_path(), marker).into(),
         name,
         steps,
     })
 }
 
 fn parse_flows(input: &mut Input) -> Result<Vec<Flow>, ParseError> {
+    input.enter_context("flows");
+
     input.next_string_constant("flows")?;
     input.next_mapping_start()?;
     let result = parse_until!(input, Event::MappingEnd, parse_flow);
     input.next_mapping_end()?;
+
+    input.leave_context();
+
     Ok(result)
 }
 
 fn parse_configuration(input: &mut Input) -> Result<Configuration, ParseError> {
+    input.enter_context("configuration");
+
     let marker = input.next_string_constant("configuration")?;
     input.next_mapping_start()?;
     let values = parse_until!(input, Event::MappingEnd, next_kv);
     input.next_mapping_end()?;
+
+    input.leave_context();
+
     Ok(Configuration {
-        location: marker.into(),
+        location: (input.current_document_path(), marker).into(),
         values,
     })
 }
 
 fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
+    input.enter_context("document");
+
     input.next_document_start()?;
     input.next_mapping_start()?;
 
@@ -384,7 +440,7 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
             }
             element => {
                 return Err(ParseError {
-                    location: Some(marker.into()),
+                    location: Some((input.current_document_path(), marker).into()),
                     kind: ErrorKind::UnexpectedSyntax,
                     msg: format!("Unexpected top-level element {element}"),
                 })
@@ -394,6 +450,8 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
 
     input.next_mapping_end()?;
     input.next_document_end()?;
+
+    input.leave_context();
 
     Ok(ConcordDocument { configuration, flows })
 }
