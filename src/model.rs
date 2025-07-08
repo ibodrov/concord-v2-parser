@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 #[derive(Debug)]
 pub enum Value {
     String(String),
@@ -7,10 +5,15 @@ pub enum Value {
     Float(String), // keep float numbers as strings to avoid any conversion issues
     Integer(i64),
     Array(Vec<Value>),
-    Mapping(HashMap<String, Value>),
+    Mapping(Vec<KV>),
 }
 
-pub type KV = (String, Value);
+#[derive(Debug)]
+pub struct KV {
+    pub location: Location,
+    pub key: String,
+    pub value: Value,
+}
 
 #[derive(Debug)]
 pub struct Location {
@@ -24,7 +27,7 @@ pub enum FlowStep {
     TaskCall {
         location: Location,
         name: String,
-        input: HashMap<String, Value>,
+        input: Vec<KV>,
     },
 }
 

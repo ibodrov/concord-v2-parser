@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display};
+use std::fmt::Display;
 
 use crate::model::{ConcordDocument, Configuration, Flow, FlowStep, Location, Value, KV};
 
@@ -130,9 +130,13 @@ impl Input {
     }
 
     fn next_kv(&mut self) -> Result<KV, ParseError> {
-        let (key, _) = self.next_string()?;
+        let (key, marker) = self.next_string()?;
         let (value, _) = self.next_value()?;
-        Ok((key, value))
+        Ok(KV {
+            location: marker.into(),
+            key,
+            value,
+        })
     }
 
     fn next_value(&mut self) -> Result<(Value, Marker), ParseError> {
@@ -249,7 +253,7 @@ fn parse_f64(value: &str) -> Result<f64, ParseError> {
 
 fn parse_task_call(input: &mut Input) -> Result<FlowStep, ParseError> {
     let (name, marker) = input.next_string()?;
-    let mut input_parameters = HashMap::new();
+    let mut input_parameters = Vec::new();
     if input.peek_string_constant("in")? {
         input.next()?;
         input.next_mapping_start()?;
@@ -288,12 +292,16 @@ fn parse_step(input: &mut Input) -> Result<FlowStep, ParseError> {
     input.next_mapping_start()?;
 
     let step = match input.next()? {
-        (Event::Scalar(key, ..), marker) if key == "log" => {
-            let (msg, _) = input.next_string()?;
+        (Event::Scalar(key, ..), task_marker) if key == "log" => {
+            let (msg, msg_marker) = input.next_string()?;
             FlowStep::TaskCall {
-                location: marker.into(),
+                location: task_marker.into(),
                 name: "log".to_owned(),
-                input: HashMap::from([("msg".to_owned(), Value::String(msg))]),
+                input: vec![KV {
+                    location: msg_marker.into(),
+                    key: "msg".to_owned(),
+                    value: Value::String(msg),
+                }],
             }
         }
         (Event::Scalar(key, ..), _) if key == "task" => parse_task_call(input)?,
@@ -385,8 +393,8 @@ pub fn parse_stream(input: &mut Input) -> Result<Vec<ConcordDocument>, ParseErro
 mod tests {
     use super::*;
 
-    fn matches_float(value: Option<&Value>, expected: &str) -> bool {
-        matches!(value, Some(Value::Float(value)) if value == expected)
+    fn matches_float(value: &Value, expected: &str) -> bool {
+        matches!(value, Value::Float(value) if value == expected)
     }
 
     #[test]
@@ -420,10 +428,10 @@ mod tests {
         let result = parse_stream(&mut input).unwrap();
         assert_eq!(result.len(), 1);
         let configuration = result[0].configuration.as_ref().unwrap();
-        assert_eq!(configuration.values[0].0, "foo");
-        assert!(matches!(configuration.values[0].1, Value::String(ref value) if value == "bar"));
-        assert_eq!(configuration.values[1].0, "baz");
-        assert!(matches!(configuration.values[1].1, Value::Float(ref value) if value == "123"));
+        assert_eq!(configuration.values[0].key, "foo");
+        assert!(matches!(configuration.values[0].value, Value::String(ref value) if value == "bar"));
+        assert_eq!(configuration.values[1].key, "baz");
+        assert!(matches!(configuration.values[1].value, Value::Float(ref value) if value == "123"));
         assert_eq!(result[0].flows.len(), 1);
         assert_eq!(result[0].flows[0].name, "default");
     }
@@ -527,15 +535,15 @@ mod tests {
             FlowStep::TaskCall {
                 name,
                 input,
-                location: marker,
+                location,
             } => {
                 assert_eq!(name, "foo");
                 assert_eq!(input.len(), 4);
-                assert!(matches_float(input.get("a"), "1.23456789"));
-                assert!(matches!(input.get("b"), Some(Value::String(value)) if value == "Hello!"));
-                assert!(matches!(input.get("c"), Some(Value::Boolean(false))));
-                assert!(matches!(input.get("d"), Some(Value::Mapping(..))));
-                assert_eq!(marker.line, 4);
+                assert!(matches_float(&input[0].value, "1.23456789"));
+                assert!(matches!(&input[1].value, Value::String(value) if value == "Hello!"));
+                assert!(matches!(&input[2].value, Value::Boolean(false)));
+                assert!(matches!(&input[3].value, Value::Mapping(nested) if nested[0].location.line == 10));
+                assert_eq!(location.line, 4);
                 true
             }
         });
