@@ -1,4 +1,5 @@
-use concord_v2_parser::parser::{parse_stream, Input};
+use concord_v2_parser::input::Input;
+use concord_v2_parser::parser::parse_stream;
 
 #[test]
 fn complex() {
