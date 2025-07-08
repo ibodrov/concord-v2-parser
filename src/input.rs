@@ -171,17 +171,6 @@ impl<T: Iterator<Item = char>> Input<T> {
         }
     }
 
-    pub fn next_string_constant(&mut self, value: &str) -> Result<Marker, ParseError> {
-        match self.try_next()? {
-            (Event::Scalar(scalar, ..), marker) if scalar == value => Ok(marker),
-            (ev, marker) => Err(ParseError {
-                location: Some((self.current_document_path(), marker).into()),
-                kind: ErrorKind::UnexpectedSyntax,
-                msg: format!("Expected a string {value}, got {ev:?}"),
-            }),
-        }
-    }
-
     pub fn next_kv(&mut self) -> Result<KV, ParseError> {
         let (key, marker) = self.next_string()?;
         self.enter_context(&format!("'{key}'"));

@@ -117,15 +117,9 @@ fn parse_form<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Form, Pa
 }
 
 fn parse_forms<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<Form>, ParseError> {
-    input.enter_context("forms");
-
-    input.next_string_constant("forms")?;
     input.next_mapping_start()?;
     let result = parse_until!(input, Event::MappingEnd, parse_form);
     input.next_mapping_end()?;
-
-    input.leave_context();
-
     Ok(result)
 }
 
@@ -190,24 +184,16 @@ fn parse_flow<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flow, Pa
 }
 
 fn parse_flows<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<Flow>, ParseError> {
-    input.enter_context("flows");
-    input.next_string_constant("flows")?;
     input.next_mapping_start()?;
     let result = parse_until!(input, Event::MappingEnd, parse_flow);
     input.next_mapping_end()?;
-    input.leave_context();
     Ok(result)
 }
 
 fn parse_configuration<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Configuration, ParseError> {
-    input.enter_context("configuration");
-
-    let marker = input.next_string_constant("configuration")?;
-    input.next_mapping_start()?;
+    let (.., marker) = input.next_mapping_start()?;
     let values = parse_until!(input, Event::MappingEnd, next_kv);
     input.next_mapping_end()?;
-
-    input.leave_context();
 
     Ok(Configuration {
         location: (input.current_document_path(), marker).into(),
@@ -216,8 +202,6 @@ fn parse_configuration<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result
 }
 
 fn parse_document<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<ConcordDocument, ParseError> {
-    input.enter_context("document");
-
     input.next_document_start()?;
     input.next_mapping_start()?;
 
@@ -226,15 +210,16 @@ fn parse_document<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Conc
     let mut forms = None;
 
     while let Ok(Some((top_level_element, marker))) = input.peek_string() {
+        input.try_next()?;
         match top_level_element.as_str() {
             "configuration" => {
-                configuration = Some(parse_configuration(input)?);
+                configuration = Some(input.with_context("configuration", parse_configuration)?);
             }
             "flows" => {
-                flows = Some(parse_flows(input)?);
+                flows = Some(input.with_context("flows", parse_flows)?);
             }
             "forms" => {
-                forms = Some(parse_forms(input)?);
+                forms = Some(input.with_context("forms", parse_forms)?);
             }
             element => {
                 return Err(ParseError {
@@ -249,8 +234,6 @@ fn parse_document<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Conc
     input.next_mapping_end()?;
     input.next_document_end()?;
 
-    input.leave_context();
-
     Ok(ConcordDocument {
         configuration,
         flows,
@@ -262,7 +245,9 @@ pub fn parse_stream<T: Iterator<Item = char>>(
     input: &mut Input<T>,
 ) -> Result<Vec<ConcordDocument>, ParseError> {
     input.next_stream_start()?;
-    let result = parse_until!(input, Event::StreamEnd, parse_document);
+    let result = input.with_context("document", |input| {
+        Ok(parse_until!(input, Event::StreamEnd, parse_document))
+    })?;
     input.next_stream_end()?;
     Ok(result)
 }
