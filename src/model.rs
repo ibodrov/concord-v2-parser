@@ -27,7 +27,8 @@ pub enum FlowStep {
     TaskCall {
         location: Location,
         name: String,
-        input: Vec<KV>,
+        input: Option<Value>,
+        output: Option<Value>,
     },
 }
 
@@ -47,5 +48,5 @@ pub struct Configuration {
 #[derive(Debug)]
 pub struct ConcordDocument {
     pub configuration: Option<Configuration>,
-    pub flows: Vec<Flow>,
+    pub flows: Option<Vec<Flow>>,
 }

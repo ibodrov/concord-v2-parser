@@ -18,6 +18,7 @@ impl TryFrom<&str> for Input {
         let mut items = Vec::new();
         loop {
             let (ev, marker) = parser.next_token()?;
+            dbg!(&ev, &marker);
             let done = ev == Event::StreamEnd;
             items.push((ev, marker));
             if done {
@@ -199,13 +200,6 @@ impl Input {
             }),
         }
     }
-
-    fn peek_string_constant(&mut self, value: &str) -> Result<bool, ParseError> {
-        match self.peek()? {
-            (Event::Scalar(scalar, ..), _) => Ok(scalar == value),
-            _ => Ok(false),
-        }
-    }
 }
 
 fn next_value(input: &mut Input) -> Result<Value, ParseError> {
@@ -262,18 +256,42 @@ fn parse_f64(value: &str) -> Result<f64, ParseError> {
 
 fn parse_task_call(input: &mut Input) -> Result<FlowStep, ParseError> {
     let (name, marker) = input.next_string()?;
-    let mut input_parameters = Vec::new();
-    if input.peek_string_constant("in")? {
+    let mut task_input = None;
+    let mut task_output = None;
+    while let Ok(Some((element, marker))) = input.peek_string() {
         input.next()?;
-        input.next_mapping_start()?;
-        let kvs = parse_until!(input, Event::MappingEnd, next_kv);
-        input_parameters.extend(kvs);
-        input.next_mapping_end()?;
-    };
+        match element.as_str() {
+            "in" => task_input = Some(input.next_value()?),
+            "out" => task_output = Some(input.next_value()?),
+            element => {
+                return Err(ParseError {
+                    location: Some(marker.into()),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected task call element {element}"),
+                })
+            }
+        }
+    }
     Ok(FlowStep::TaskCall {
         name,
-        input: input_parameters,
+        input: task_input,
+        output: task_output,
         location: marker.into(),
+    })
+}
+
+fn parse_log_call(input: &mut Input, task_marker: Marker) -> Result<FlowStep, ParseError> {
+    let (msg, msg_marker) = input.next_string()?;
+    let input = Value::Mapping(vec![KV {
+        location: msg_marker.into(),
+        key: "msg".to_owned(),
+        value: Value::String(msg),
+    }]);
+    Ok(FlowStep::TaskCall {
+        location: task_marker.into(),
+        name: "log".to_owned(),
+        input: Some(input),
+        output: None,
     })
 }
 
@@ -301,18 +319,7 @@ fn parse_step(input: &mut Input) -> Result<FlowStep, ParseError> {
     input.next_mapping_start()?;
 
     let step = match input.next()? {
-        (Event::Scalar(key, ..), task_marker) if key == "log" => {
-            let (msg, msg_marker) = input.next_string()?;
-            FlowStep::TaskCall {
-                location: task_marker.into(),
-                name: "log".to_owned(),
-                input: vec![KV {
-                    location: msg_marker.into(),
-                    key: "msg".to_owned(),
-                    value: Value::String(msg),
-                }],
-            }
-        }
+        (Event::Scalar(key, ..), task_marker) if key == "log" => parse_log_call(input, task_marker)?,
         (Event::Scalar(key, ..), _) if key == "task" => parse_task_call(input)?,
         (ev, marker) => {
             return Err(ParseError {
@@ -365,17 +372,15 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
 
     // top-level elements
     let mut configuration = None;
-    let mut flows = Vec::new();
+    let mut flows = None;
 
     while let Ok(Some((top_level_element, marker))) = input.peek_string() {
         match top_level_element.as_str() {
             "configuration" => {
                 configuration = Some(parse_configuration(input)?);
-                input.next_mapping_end()?;
             }
             "flows" => {
-                flows.extend(parse_flows(input)?);
-                input.next_mapping_end()?;
+                flows = Some(parse_flows(input)?);
             }
             element => {
                 return Err(ParseError {
@@ -387,6 +392,7 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
         }
     }
 
+    input.next_mapping_end()?;
     input.next_document_end()?;
 
     Ok(ConcordDocument { configuration, flows })

@@ -1,4 +1,30 @@
 configuration:
+  runtime: "concord-v2"
   dependencies:
     - mvn://com.acme.concord:awesome-task:4.2.0
     - https://acme.com/awesome-zip.zip
+  arguments:
+    foo: "bar"
+    baz:
+      nested:
+        x:
+          y:
+            z: 123
+  debug: true
+  processTimeout: PT15M
+  requirements:
+    agent:
+      capableOf: "everything"
+
+flows:
+  default:
+    - log: "Hello!"
+    - task: awesome-task
+      in:
+        a: 123
+        b: "345"
+      out: result
+    - task: awesome-task
+      out:
+        result: ${result.foo}
+
