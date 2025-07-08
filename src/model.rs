@@ -71,6 +71,7 @@ pub enum FlowStep {
         task_name: String,
         input: Option<Value>,
         output: Option<Value>,
+        error: Option<Vec<FlowStep>>,
     },
 }
 

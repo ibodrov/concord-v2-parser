@@ -8,11 +8,12 @@ Status:
   - [x] basic `configuration` parsing
     - [ ] structured parsing (`runtime`, `debug` and other standard parameters)
   - [x] basic `flows` parsing
-    - [x] log calls
+    - [x] `log`
+    - [x] `throw`
     - [x] basic `task` calls
         - [x] `in`
         - [x] `out`
-        - [ ] `error`
+        - [x] `error`
         - [ ] `ignoreErrors`
         - [ ] `loop`
         - [ ] `meta`

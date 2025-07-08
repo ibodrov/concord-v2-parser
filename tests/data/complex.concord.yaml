@@ -27,6 +27,9 @@ flows:
     - task: awesome-task
       out:
         result: ${result.foo}
+      error:
+        - log: Boom, ${lastError}!
+        - throw: ${lastError}!
   myOtherFlow:
     - log: "Bye!"
 

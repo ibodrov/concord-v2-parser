@@ -97,6 +97,16 @@ impl<T: Iterator<Item = char>> Input<T> {
         self.document_path.pop();
     }
 
+    pub fn with_context<O, F>(&mut self, name: &str, f: F) -> Result<O, ParseError>
+    where
+        F: Fn(&mut Self) -> Result<O, ParseError>,
+    {
+        self.enter_context(name);
+        let result = f(self)?;
+        self.leave_context();
+        Ok(result)
+    }
+
     pub fn current_document_path(&self) -> DocumentPath {
         DocumentPath::new(&self.document_path)
     }
@@ -163,7 +173,7 @@ impl<T: Iterator<Item = char>> Input<T> {
     pub fn next_kv(&mut self) -> Result<KV, ParseError> {
         let (key, marker) = self.next_string()?;
         self.enter_context(&format!("'{key}'"));
-        let value = self.next_value()?;
+        let (value, _) = self.next_value()?;
         self.leave_context();
         Ok(KV {
             location: (self.current_document_path(), marker).into(),
@@ -172,22 +182,22 @@ impl<T: Iterator<Item = char>> Input<T> {
         })
     }
 
-    pub fn next_value(&mut self) -> Result<Value, ParseError> {
+    pub fn next_value(&mut self) -> Result<(Value, Marker), ParseError> {
         match self.try_next()? {
             (Event::Scalar(scalar, style, ..), marker) => {
                 use yaml_rust2::scanner::TScalarStyle::*;
                 match style {
-                    SingleQuoted | DoubleQuoted => Ok(Value::String(scalar)),
+                    SingleQuoted | DoubleQuoted => Ok((Value::String(scalar), marker)),
                     Plain => {
                         if parse_f64(&scalar).is_ok() {
-                            Ok(Value::Float(scalar))
+                            Ok((Value::Float(scalar), marker))
                         } else if let Ok(value) = scalar.parse::<i64>() {
-                            Ok(Value::Integer(value))
+                            Ok((Value::Integer(value), marker))
                         } else if let Ok(value) = scalar.parse::<bool>() {
                             // TODO handle "yes/no", etc
-                            Ok(Value::Boolean(value))
+                            Ok((Value::Boolean(value), marker))
                         } else {
-                            Ok(Value::String(scalar))
+                            Ok((Value::String(scalar), marker))
                         }
                     }
                     _ => Err(ParseError {
@@ -197,17 +207,20 @@ impl<T: Iterator<Item = char>> Input<T> {
                     }),
                 }
             }
-            (Event::SequenceStart(..), ..) => {
-                let result = parse_until!(self, Event::SequenceEnd, next_value);
+            (Event::SequenceStart(..), marker) => {
+                let result = parse_until!(self, Event::SequenceEnd, next_value)
+                    .into_iter()
+                    .map(|(v, _)| v)
+                    .collect();
                 self.next_sequence_end()?;
-                Ok(Value::Array(result))
+                Ok((Value::Array(result), marker))
             }
-            (Event::MappingStart(..), ..) => {
+            (Event::MappingStart(..), marker) => {
                 let result = parse_until!(self, Event::MappingEnd, next_kv)
                     .into_iter()
                     .collect();
                 self.next_mapping_end()?;
-                Ok(Value::Mapping(result))
+                Ok((Value::Mapping(result), marker))
             }
             (ev, marker) => Err(ParseError {
                 location: Some((self.current_document_path(), marker).into()),
@@ -234,7 +247,7 @@ impl<T: Iterator<Item = char>> Input<T> {
     }
 }
 
-pub fn next_value<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Value, ParseError> {
+pub fn next_value<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<(Value, Marker), ParseError> {
     input.next_value()
 }
 

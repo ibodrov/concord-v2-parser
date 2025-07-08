@@ -5,43 +5,48 @@ use crate::parse_until;
 
 fn parse_in_parameters<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Value, ParseError> {
     input.enter_context("in parameters");
-    let result = input.next_value()?;
+    let (value, _) = input.next_value()?;
     input.leave_context();
-    Ok(result)
+    Ok(value)
 }
 
 fn parse_out_parameters<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Value, ParseError> {
     input.enter_context("out parameters");
-    let result = input.next_value()?;
+    let (value, _) = input.next_value()?;
     input.leave_context();
-    Ok(result)
+    Ok(value)
 }
 
 fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
     let (task_name, marker) = input.next_string()?;
     input.enter_context(&format!("'{task_name}' task call"));
+
     let mut task_input = None;
     let mut task_output = None;
+    let mut error = None;
+
     while let Ok(Some((element, marker))) = input.peek_string() {
         input.try_next()?;
         match element.as_str() {
             "in" => task_input = Some(parse_in_parameters(input)?),
             "out" => task_output = Some(parse_out_parameters(input)?),
+            "error" => error = Some(input.with_context("'error' block", parse_flow_steps)?),
             element => {
                 return Err(ParseError {
                     location: Some((input.current_document_path(), marker).into()),
                     kind: ErrorKind::UnexpectedSyntax,
-                    msg: format!("Unexpected task call element {element}"),
+                    msg: format!("Unexpected task call element '{element}'"),
                 })
             }
         }
     }
     input.leave_context();
     Ok(FlowStep::TaskCall {
+        location: (input.current_document_path(), marker).into(),
         task_name,
         input: task_input,
         output: task_output,
-        location: (input.current_document_path(), marker).into(),
+        error,
     })
 }
 
@@ -49,7 +54,7 @@ fn parse_log_call<T: Iterator<Item = char>>(
     input: &mut Input<T>,
     task_marker: Marker,
 ) -> Result<FlowStep, ParseError> {
-    input.enter_context("log step");
+    input.enter_context("'log' step");
     let (msg, msg_marker) = input.next_string()?;
     let task_input = Value::Mapping(vec![KV {
         location: (input.current_document_path(), msg_marker).into(),
@@ -62,6 +67,28 @@ fn parse_log_call<T: Iterator<Item = char>>(
         task_name: "log".to_owned(),
         input: Some(task_input),
         output: None,
+        error: None,
+    })
+}
+
+fn parse_throw_call<T: Iterator<Item = char>>(
+    input: &mut Input<T>,
+    task_marker: Marker,
+) -> Result<FlowStep, ParseError> {
+    input.enter_context("'throw' step");
+    let (value, exception_marker) = input.next_value()?;
+    let task_input = Value::Mapping(vec![KV {
+        location: (input.current_document_path(), exception_marker).into(),
+        key: "exception".to_owned(),
+        value,
+    }]);
+    input.leave_context();
+    Ok(FlowStep::TaskCall {
+        location: (input.current_document_path(), task_marker).into(),
+        task_name: "throw".to_owned(),
+        input: Some(task_input),
+        output: None,
+        error: None,
     })
 }
 
@@ -119,6 +146,7 @@ fn parse_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep
 
     let step = match input.try_next()? {
         (Event::Scalar(key, ..), task_marker) if key == "log" => parse_log_call(input, task_marker)?,
+        (Event::Scalar(key, ..), task_marker) if key == "throw" => parse_throw_call(input, task_marker)?,
         (Event::Scalar(key, ..), _) if key == "task" => parse_task_call(input)?,
         (ev, marker) => {
             return Err(ParseError {
@@ -134,16 +162,18 @@ fn parse_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep
     Ok(step)
 }
 
-fn parse_flow<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flow, ParseError> {
-    let (name, marker) = input.next_string()?;
-    input.enter_context(&format!("'{name}' flow"));
-
+fn parse_flow_steps<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<FlowStep>, ParseError> {
     input.next_sequence_start()?;
     let steps = parse_until!(input, Event::SequenceEnd, parse_step);
     input.next_sequence_end()?;
+    Ok(steps)
+}
 
+fn parse_flow<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flow, ParseError> {
+    let (name, marker) = input.next_string()?;
+    input.enter_context(&format!("'{name}' flow"));
+    let steps = parse_flow_steps(input)?;
     input.leave_context();
-
     Ok(Flow {
         location: (input.current_document_path(), marker).into(),
         name,
@@ -153,14 +183,11 @@ fn parse_flow<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flow, Pa
 
 fn parse_flows<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<Flow>, ParseError> {
     input.enter_context("flows");
-
     input.next_string_constant("flows")?;
     input.next_mapping_start()?;
     let result = parse_until!(input, Event::MappingEnd, parse_flow);
     input.next_mapping_end()?;
-
     input.leave_context();
-
     Ok(result)
 }
 
