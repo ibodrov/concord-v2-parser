@@ -1,6 +1,8 @@
 use crate::error::{ErrorKind, ParseError};
-use crate::input::{next_kv, Event, Input, Marker};
-use crate::model::{ConcordDocument, Configuration, Flow, FlowStep, Form, FormField, Value, KV};
+use crate::input::{next_kv, Event, Input};
+use crate::model::{
+    ConcordDocument, Configuration, Flow, FlowStep, Form, FormField, StepDefinition, Value, KV,
+};
 use crate::parse_until;
 
 fn parse_value<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Value, ParseError> {
@@ -19,8 +21,8 @@ fn parse_bool<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<bool, Pa
     }
 }
 
-fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
-    let (task_name, marker) = input.next_string()?;
+fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    let (task_name, ..) = input.next_string()?;
     input.enter_context(&format!("'{task_name}' task call"));
 
     let mut task_input = None;
@@ -47,8 +49,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flo
 
     input.leave_context();
 
-    Ok(FlowStep::TaskCall {
-        location: (input.current_document_path(), marker).into(),
+    Ok(StepDefinition::TaskCall {
         task_name,
         input: task_input,
         output: task_output,
@@ -61,8 +62,7 @@ fn parse_single_argument_task<T: Iterator<Item = char>>(
     input: &mut Input<T>,
     task_name: &str,
     parameter_name: &str,
-    task_marker: Marker,
-) -> Result<FlowStep, ParseError> {
+) -> Result<StepDefinition, ParseError> {
     input.enter_context(&format!("'{task_name}' step"));
     let (value, value_marker) = input.next_value()?;
     let task_input = Value::Mapping(vec![KV {
@@ -71,8 +71,7 @@ fn parse_single_argument_task<T: Iterator<Item = char>>(
         value,
     }]);
     input.leave_context();
-    Ok(FlowStep::TaskCall {
-        location: (input.current_document_path(), task_marker).into(),
+    Ok(StepDefinition::TaskCall {
         task_name: task_name.to_owned(),
         input: Some(task_input),
         output: None,
@@ -131,32 +130,44 @@ fn parse_forms<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<For
 }
 
 fn parse_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
-    input.next_mapping_start()?;
+    let (_, step_marker) = input.next_mapping_start()?;
 
-    let step = match input.try_next()? {
-        // log
-        (Event::Scalar(key, ..), task_marker) if key == "log" => {
-            parse_single_argument_task(input, "log", "msg", task_marker)?
+    let location = (input.current_document_path(), step_marker).into();
+    let mut step_name = None;
+    let mut step = None;
+
+    while let Ok(Some((name_or_step, ..))) = input.peek_string() {
+        input.try_next()?;
+        match name_or_step.as_str() {
+            "name" => step_name = Some(input.next_string()?.0),
+            "log" => step = Some(parse_single_argument_task(input, "log", "msg")?),
+            "throw" => step = Some(parse_single_argument_task(input, "throw", "exception")?),
+            "task" => step = Some(parse_task_call(input)?),
+            unknown => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Expected a step or a step's name, got {unknown}"),
+                })
+            }
         }
-        // throw
-        (Event::Scalar(key, ..), task_marker) if key == "throw" => {
-            parse_single_argument_task(input, "throw", "exception", task_marker)?
-        }
-        // task
-        (Event::Scalar(key, ..), _) if key == "task" => parse_task_call(input)?,
-        // unknown
-        (ev, marker) => {
-            return Err(ParseError {
-                location: Some((input.current_document_path(), marker).into()),
-                kind: ErrorKind::UnexpectedSyntax,
-                msg: format!("Expected a flow step, got {ev:?}"),
-            })
-        }
-    };
+    }
 
     input.next_mapping_end()?;
 
-    Ok(step)
+    let Some(step) = step else {
+        return Err(ParseError {
+            location: Some(location),
+            kind: ErrorKind::UnexpectedSyntax,
+            msg: "Expected a step".to_owned(),
+        });
+    };
+
+    Ok(FlowStep {
+        location,
+        step_name,
+        step,
+    })
 }
 
 fn parse_flow_steps<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<FlowStep>, ParseError> {

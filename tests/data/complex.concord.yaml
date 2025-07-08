@@ -25,7 +25,8 @@ flows:
         b: "345"
       out: result
       ignoreErrors: true
-    - task: awesome-task
+    - name: Awesome!
+      task: awesome-task
       out:
         result: ${result.foo}
       error:

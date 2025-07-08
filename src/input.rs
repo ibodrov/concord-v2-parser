@@ -45,6 +45,7 @@ fn parse_f64(value: &str) -> Result<f64, ParseError> {
 pub struct Input<T: Iterator<Item = char>> {
     document_path: Vec<String>,
     yaml: yaml_rust2::parser::Parser<T>,
+    eof: bool,
 }
 
 impl<'a> TryFrom<&'a str> for Input<Chars<'a>> {
@@ -55,6 +56,7 @@ impl<'a> TryFrom<&'a str> for Input<Chars<'a>> {
         Ok(Input {
             document_path: Vec::new(),
             yaml,
+            eof: false,
         })
     }
 }
@@ -112,7 +114,17 @@ impl<T: Iterator<Item = char>> Input<T> {
     }
 
     pub fn try_next(&mut self) -> Result<(Event, Marker), ParseError> {
+        if self.eof {
+            return Err(ParseError {
+                location: None,
+                kind: ErrorKind::ScanError,
+                msg: "EOF".to_owned(),
+            });
+        }
         let (event, marker) = &self.yaml.next_token()?;
+        if matches!(event, Event::StreamEnd) {
+            self.eof = true;
+        }
         Ok((event.clone(), *marker))
     }
 

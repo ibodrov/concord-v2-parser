@@ -11,7 +11,7 @@ Status:
     - [x] `log`
     - [x] `throw`
     - [x] basic `task` calls
-        - [ ] `name`
+        - [x] `name`
         - [x] `in`
         - [x] `out`
         - [x] `error`

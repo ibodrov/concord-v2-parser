@@ -65,15 +65,21 @@ pub struct Configuration {
 }
 
 #[derive(Debug)]
-pub enum FlowStep {
+pub enum StepDefinition {
     TaskCall {
-        location: Location,
         task_name: String,
         input: Option<Value>,
         output: Option<Value>,
         error: Option<Vec<FlowStep>>,
         ignore_errors: Option<bool>,
     },
+}
+
+#[derive(Debug)]
+pub struct FlowStep {
+    pub location: Location,
+    pub step_name: Option<String>,
+    pub step: StepDefinition,
 }
 
 #[derive(Debug)]
