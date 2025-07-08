@@ -11,13 +11,13 @@ Status:
     - [x] `log`
     - [x] `throw`
     - [x] basic `task` calls
+        - [ ] `name`
         - [x] `in`
         - [x] `out`
         - [x] `error`
-        - [ ] `ignoreErrors`
+        - [x] `ignoreErrors`
         - [ ] `loop`
         - [ ] `meta`
-        - [ ] `name`
         - [ ] `retry`
     - [ ] everything else
   - [x] basic `forms` parsing

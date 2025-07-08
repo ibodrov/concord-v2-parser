@@ -8,6 +8,17 @@ fn parse_value<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Value, 
     Ok(value)
 }
 
+fn parse_bool<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<bool, ParseError> {
+    match input.next_value()? {
+        (Value::Boolean(result), ..) => Ok(result),
+        (value, marker) => Err(ParseError {
+            location: Some((input.current_document_path(), marker).into()),
+            kind: ErrorKind::UnexpectedSyntax,
+            msg: format!("Expected a bool value, got '{value:?}"),
+        }),
+    }
+}
+
 fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
     let (task_name, marker) = input.next_string()?;
     input.enter_context(&format!("'{task_name}' task call"));
@@ -15,6 +26,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flo
     let mut task_input = None;
     let mut task_output = None;
     let mut error = None;
+    let mut ignore_errors = None;
 
     while let Ok(Some((element, marker))) = input.peek_string() {
         input.try_next()?;
@@ -22,6 +34,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flo
             "in" => task_input = Some(input.with_context("'in' parameters", parse_value)?),
             "out" => task_output = Some(input.with_context("'out' parameters", parse_value)?),
             "error" => error = Some(input.with_context("'error' block", parse_flow_steps)?),
+            "ignoreErrors" => ignore_errors = Some(input.with_context("'ignoreErrors' option", parse_bool)?),
             element => {
                 return Err(ParseError {
                     location: Some((input.current_document_path(), marker).into()),
@@ -40,6 +53,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flo
         input: task_input,
         output: task_output,
         error,
+        ignore_errors,
     })
 }
 
@@ -63,6 +77,7 @@ fn parse_single_argument_task<T: Iterator<Item = char>>(
         input: Some(task_input),
         output: None,
         error: None,
+        ignore_errors: None,
     })
 }
 

@@ -72,6 +72,7 @@ pub enum FlowStep {
         input: Option<Value>,
         output: Option<Value>,
         error: Option<Vec<FlowStep>>,
+        ignore_errors: Option<bool>,
     },
 }
 
