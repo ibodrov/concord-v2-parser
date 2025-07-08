@@ -1,6 +1,8 @@
 use std::fmt::Display;
 
-use crate::model::{ConcordDocument, Configuration, DocumentPath, Flow, FlowStep, Location, Value, KV};
+use crate::model::{
+    ConcordDocument, Configuration, DocumentPath, Flow, FlowStep, Form, FormField, Location, Value, KV,
+};
 
 pub type Event = yaml_rust2::Event;
 pub type Marker = yaml_rust2::scanner::Marker;
@@ -19,7 +21,6 @@ impl TryFrom<&str> for Input {
         let mut items = Vec::new();
         loop {
             let (ev, marker) = parser.next_token()?;
-            dbg!(&ev, &marker);
             let done = ev == Event::StreamEnd;
             items.push((ev, marker));
             if done {
@@ -131,7 +132,7 @@ impl Input {
             (ev, marker) => Err(ParseError {
                 location: Some((self.current_document_path(), marker).into()),
                 kind: ErrorKind::UnexpectedSyntax,
-                msg: format!("Expected to peek a scalar, got {ev:?}"),
+                msg: format!("Expected a string value, got {ev:?}"),
             }),
         }
     }
@@ -354,6 +355,55 @@ impl From<(DocumentPath, &yaml_rust2::scanner::Marker)> for Location {
     }
 }
 
+fn parse_form_field(input: &mut Input) -> Result<FormField, ParseError> {
+    input.next_mapping_start()?;
+
+    let (name, marker) = input.next_string()?;
+    input.enter_context(&format!("'{name}' field"));
+
+    input.next_mapping_start()?;
+    let options = parse_until!(input, Event::MappingEnd, next_kv);
+    input.next_mapping_end()?;
+
+    input.next_mapping_end()?;
+    input.leave_context();
+    Ok(FormField {
+        location: (input.current_document_path(), marker).into(),
+        name,
+        options,
+    })
+}
+
+fn parse_form(input: &mut Input) -> Result<Form, ParseError> {
+    let (name, marker) = input.next_string()?;
+    input.enter_context(&format!("'{name}' form"));
+
+    input.next_sequence_start()?;
+    let fields = parse_until!(input, Event::SequenceEnd, parse_form_field);
+    input.next_sequence_end()?;
+
+    input.leave_context();
+
+    Ok(Form {
+        location: (input.current_document_path(), marker).into(),
+        name,
+        fields,
+    })
+}
+
+fn parse_forms(input: &mut Input) -> Result<Vec<Form>, ParseError> {
+    input.enter_context("forms");
+
+    input.next_string_constant("forms")?;
+    input.next_mapping_start()?;
+    let result = parse_until!(input, Event::MappingEnd, parse_form);
+    input.next_mapping_end()?;
+
+    input.leave_context();
+
+    Ok(result)
+}
+
 fn parse_step(input: &mut Input) -> Result<FlowStep, ParseError> {
     input.next_mapping_start()?;
 
@@ -429,6 +479,7 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
     // top-level elements
     let mut configuration = None;
     let mut flows = None;
+    let mut forms = None;
 
     while let Ok(Some((top_level_element, marker))) = input.peek_string() {
         match top_level_element.as_str() {
@@ -437,6 +488,9 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
             }
             "flows" => {
                 flows = Some(parse_flows(input)?);
+            }
+            "forms" => {
+                forms = Some(parse_forms(input)?);
             }
             element => {
                 return Err(ParseError {
@@ -453,7 +507,11 @@ fn parse_document(input: &mut Input) -> Result<ConcordDocument, ParseError> {
 
     input.leave_context();
 
-    Ok(ConcordDocument { configuration, flows })
+    Ok(ConcordDocument {
+        configuration,
+        flows,
+        forms,
+    })
 }
 
 pub fn parse_stream(input: &mut Input) -> Result<Vec<ConcordDocument>, ParseError> {

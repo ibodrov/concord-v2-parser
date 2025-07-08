@@ -59,6 +59,12 @@ pub struct KV {
 }
 
 #[derive(Debug)]
+pub struct Configuration {
+    pub location: Location,
+    pub values: Vec<KV>,
+}
+
+#[derive(Debug)]
 pub enum FlowStep {
     TaskCall {
         location: Location,
@@ -76,13 +82,22 @@ pub struct Flow {
 }
 
 #[derive(Debug)]
-pub struct Configuration {
+pub struct FormField {
     pub location: Location,
-    pub values: Vec<KV>,
+    pub name: String,
+    pub options: Vec<KV>,
+}
+
+#[derive(Debug)]
+pub struct Form {
+    pub location: Location,
+    pub name: String,
+    pub fields: Vec<FormField>,
 }
 
 #[derive(Debug)]
 pub struct ConcordDocument {
     pub configuration: Option<Configuration>,
     pub flows: Option<Vec<Flow>>,
+    pub forms: Option<Vec<Form>>,
 }
