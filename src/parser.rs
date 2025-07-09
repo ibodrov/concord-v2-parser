@@ -343,7 +343,7 @@ fn parse_flow_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
                 return Err(ParseError {
                     location: Some(location),
                     kind: ErrorKind::UnexpectedSyntax,
-                    msg: format!("Unexpected script step element '{element}'"),
+                    msg: format!("Unexpected flow call element '{element}'"),
                 })
             }
         }
@@ -362,7 +362,105 @@ fn parse_flow_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
     })
 }
 
-fn parse_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
+fn parse_checkpoint<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    let (name, marker) = input.next_string()?;
+    input.enter_context(format!("checkpoint '{name}"));
+
+    let location = (input.current_document_path(), marker).into();
+    let mut meta = None;
+
+    while let Ok(Some((element, _))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            element => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected checkpoint element '{element}'"),
+                })
+            }
+        }
+    }
+
+    input.leave_context();
+
+    Ok(StepDefinition::Checkpoint { name, meta })
+}
+
+fn parse_if<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    let (expression, marker) = input.next_string()?;
+    input.enter_context(format!("if '{expression}"));
+
+    let location = (input.current_document_path(), marker).into();
+    let mut then_steps = None;
+    let mut else_steps = None;
+    let mut meta = None;
+
+    while let Ok(Some((element, _))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "then" => then_steps = Some(input.with_context("'then' block", parse_flow_steps)?),
+            "else" => else_steps = Some(input.with_context("'else' block", parse_flow_steps)?),
+            "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            element => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected if block element '{element}'"),
+                })
+            }
+        }
+    }
+
+    input.leave_context();
+
+    let Some(then_steps) = then_steps else {
+        return Err(ParseError {
+            location: Some(location),
+            kind: ErrorKind::UnexpectedSyntax,
+            msg: "The 'then' steps are required in 'if' block".to_owned(),
+        });
+    };
+
+    Ok(StepDefinition::If {
+        expression,
+        then_steps,
+        else_steps,
+        meta,
+    })
+}
+
+fn parse_set_variables<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    input.enter_context("set");
+
+    let (_, marker) = input.next_mapping_start()?;
+    let vars = parse_until!(input, Event::MappingEnd, next_kv);
+    input.next_mapping_end()?;
+
+    let location = (input.current_document_path(), marker).into();
+    let mut meta = None;
+
+    while let Ok(Some((element, _))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            element => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected checkpoint element '{element}'"),
+                })
+            }
+        }
+    }
+
+    input.leave_context();
+
+    Ok(StepDefinition::SetVariables { vars, meta })
+}
+
+fn parse_flow_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
     let (_, step_marker) = input.next_mapping_start()?;
 
     let location = (input.current_document_path(), step_marker).into();
@@ -379,6 +477,9 @@ fn parse_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep
             "expr" => step = Some(parse_expr(input)?),
             "script" => step = Some(parse_script(input)?),
             "call" => step = Some(parse_flow_call(input)?),
+            "checkpoint" => step = Some(parse_checkpoint(input)?),
+            "if" => step = Some(parse_if(input)?),
+            "set" => step = Some(parse_set_variables(input)?),
             unknown => {
                 return Err(ParseError {
                     location: Some(location),
@@ -408,7 +509,7 @@ fn parse_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep
 
 fn parse_flow_steps<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<FlowStep>, ParseError> {
     input.next_sequence_start()?;
-    let steps = parse_until!(input, Event::SequenceEnd, parse_step);
+    let steps = parse_until!(input, Event::SequenceEnd, parse_flow_step);
     input.next_sequence_end()?;
     Ok(steps)
 }

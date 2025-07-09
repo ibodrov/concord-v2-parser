@@ -49,6 +49,7 @@ flows:
         times: 3
         in:
           baz: "qux"
+
   flowWithExprs:
     - expr: ${boo}
     - name: "Boo!"
@@ -58,6 +59,7 @@ flows:
       error:
         - log: "${lastError}"
       out: exprOut
+
   flowWithScripts:
     - script: js
       body: |
@@ -80,6 +82,7 @@ flows:
               z: 123
       body: |
         println('hi');
+
   flowWithCalls:
     - call: flowWithTasks
     - name: Call a flow
@@ -103,6 +106,33 @@ flows:
           - a
           - b
           - c
+
+  flowWithSets:
+    - set:
+        x: y
+    - set:
+        foo: bar
+        bar: baz
+        baz: "qux"
+
+  flowWithCheckpoints:
+    - checkpoint: foobar
+    - checkpoint: barbaz
+      meta:
+        a: b
+
+  flowWithIfs:
+    - if: ${false}
+      then:
+        - log: "How did this happen"
+    - if: ${something}
+      then:
+        - log: "It is true"
+        - log: "Definitely"
+      else:
+        - log: "It is false"
+      meta:
+        foo: bar
 
 forms:
   myForm:

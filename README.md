@@ -16,9 +16,13 @@ Status:
   - [ ] everything else
 - flow steps:
   - [x] `log`
+  - [ ] `logYaml`
   - [x] `throw`
   - [x] `task`
   - [x] `expr`
   - [x] `script`
   - [x] `call`
+  - [x] `checkpoint`
+  - [x] `if`
+  - [x] `set`
   - [ ] everything else

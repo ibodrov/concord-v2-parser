@@ -124,6 +124,20 @@ pub enum StepDefinition {
         meta: Option<Vec<KV>>,
         retry: Option<Retry>,
     },
+    Checkpoint {
+        name: String,
+        meta: Option<Vec<KV>>,
+    },
+    If {
+        expression: String,
+        then_steps: Vec<FlowStep>,
+        else_steps: Option<Vec<FlowStep>>,
+        meta: Option<Vec<KV>>,
+    },
+    SetVariables {
+        vars: Vec<KV>,
+        meta: Option<Vec<KV>>,
+    },
 }
 
 #[derive(Debug)]
