@@ -22,6 +22,49 @@ fn parse_bool<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<bool, Pa
     }
 }
 
+fn parse_form_field<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FormField, ParseError> {
+    input.next_mapping_start()?;
+
+    let (name, marker) = input.next_string()?;
+    input.enter_context(&format!("'{name}' field"));
+
+    input.next_mapping_start()?;
+    let options = parse_until!(input, Event::MappingEnd, next_kv);
+    input.next_mapping_end()?;
+
+    input.next_mapping_end()?;
+    input.leave_context();
+    Ok(FormField {
+        location: (input.current_document_path(), marker).into(),
+        name,
+        options,
+    })
+}
+
+fn parse_form<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Form, ParseError> {
+    let (name, marker) = input.next_string()?;
+    input.enter_context(&format!("'{name}' form"));
+
+    input.next_sequence_start()?;
+    let fields = parse_until!(input, Event::SequenceEnd, parse_form_field);
+    input.next_sequence_end()?;
+
+    input.leave_context();
+
+    Ok(Form {
+        location: (input.current_document_path(), marker).into(),
+        name,
+        fields,
+    })
+}
+
+fn parse_forms<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<Form>, ParseError> {
+    input.next_mapping_start()?;
+    let result = parse_until!(input, Event::MappingEnd, parse_form);
+    input.next_mapping_end()?;
+    Ok(result)
+}
+
 fn parse_meta<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<KV>, ParseError> {
     input.next_mapping_start()?;
     let result = parse_until!(input, Event::MappingEnd, next_kv);
@@ -117,9 +160,10 @@ fn parse_retry<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Retry, 
 }
 
 fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
-    let (task_name, ..) = input.next_string()?;
+    let (task_name, marker) = input.next_string()?;
     input.enter_context(&format!("'{task_name}' task call"));
 
+    let location = (input.current_document_path(), marker).into();
     let mut task_input = None;
     let mut task_output = None;
     let mut error = None;
@@ -128,7 +172,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
     let mut meta = None;
     let mut retry = None;
 
-    while let Ok(Some((element, marker))) = input.peek_string() {
+    while let Ok(Some((element, _))) = input.peek_string() {
         input.try_next()?;
         match element.as_str() {
             "in" => task_input = Some(input.with_context("'in' parameters", parse_value)?),
@@ -140,7 +184,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
             "retry" => retry = Some(input.with_context("'retry' option", parse_retry)?),
             element => {
                 return Err(ParseError {
-                    location: Some((input.current_document_path(), marker).into()),
+                    location: Some(location),
                     kind: ErrorKind::UnexpectedSyntax,
                     msg: format!("Unexpected task call element '{element}'"),
                 })
@@ -187,47 +231,39 @@ fn parse_single_argument_task<T: Iterator<Item = char>>(
     })
 }
 
-fn parse_form_field<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FormField, ParseError> {
-    input.next_mapping_start()?;
+fn parse_expr<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    let (expr, marker) = input.next_string()?;
+    input.enter_context(&format!("expression '{expr}'"));
 
-    let (name, marker) = input.next_string()?;
-    input.enter_context(&format!("'{name}' field"));
+    let location = (input.current_document_path(), marker).into();
+    let mut expr_output = None;
+    let mut error = None;
+    let mut meta = None;
 
-    input.next_mapping_start()?;
-    let options = parse_until!(input, Event::MappingEnd, next_kv);
-    input.next_mapping_end()?;
-
-    input.next_mapping_end()?;
-    input.leave_context();
-    Ok(FormField {
-        location: (input.current_document_path(), marker).into(),
-        name,
-        options,
-    })
-}
-
-fn parse_form<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Form, ParseError> {
-    let (name, marker) = input.next_string()?;
-    input.enter_context(&format!("'{name}' form"));
-
-    input.next_sequence_start()?;
-    let fields = parse_until!(input, Event::SequenceEnd, parse_form_field);
-    input.next_sequence_end()?;
+    while let Ok(Some((element, _))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "out" => expr_output = Some(input.with_context("'out' parameters", parse_value)?),
+            "error" => error = Some(input.with_context("'error' block", parse_flow_steps)?),
+            "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            element => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected expr step element '{element}'"),
+                })
+            }
+        }
+    }
 
     input.leave_context();
 
-    Ok(Form {
-        location: (input.current_document_path(), marker).into(),
-        name,
-        fields,
+    Ok(StepDefinition::Expression {
+        expr,
+        output: expr_output,
+        error,
+        meta,
     })
-}
-
-fn parse_forms<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<Form>, ParseError> {
-    input.next_mapping_start()?;
-    let result = parse_until!(input, Event::MappingEnd, parse_form);
-    input.next_mapping_end()?;
-    Ok(result)
 }
 
 fn parse_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
@@ -244,11 +280,12 @@ fn parse_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep
             "log" => step = Some(parse_single_argument_task(input, "log", "msg")?),
             "throw" => step = Some(parse_single_argument_task(input, "throw", "exception")?),
             "task" => step = Some(parse_task_call(input)?),
+            "expr" => step = Some(parse_expr(input)?),
             unknown => {
                 return Err(ParseError {
                     location: Some(location),
                     kind: ErrorKind::UnexpectedSyntax,
-                    msg: format!("Expected a step or a step's name, got {unknown}"),
+                    msg: format!("Expected a step or a step's name, got '{unknown}'"),
                 })
             }
         }

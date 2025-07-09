@@ -33,6 +33,13 @@ flows:
       error:
         - log: Boom, ${lastError}!
         - throw: ${lastError}!
+    - name: "Boo!"
+      expr: ${boo}
+      meta:
+        foobar: "barbaz"
+      error:
+        - log: "${lastError}"
+      out: exprOut
   myOtherFlow:
     - log: "Bye!"
     - task: somethingElse

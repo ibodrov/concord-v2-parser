@@ -87,6 +87,7 @@ pub struct Configuration {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum StepDefinition {
     TaskCall {
         task_name: String,
@@ -97,6 +98,12 @@ pub enum StepDefinition {
         looping: Option<Loop>,
         meta: Option<Vec<KV>>,
         retry: Option<Retry>,
+    },
+    Expression {
+        expr: String,
+        output: Option<Value>,
+        error: Option<Vec<FlowStep>>,
+        meta: Option<Vec<KV>>,
     },
 }
 

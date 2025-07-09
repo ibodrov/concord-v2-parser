@@ -18,13 +18,6 @@ Status:
 - flow steps:
   - [x] `log`
   - [x] `throw`
-  - [x] basic `task` calls
-    - [x] `name`
-    - [x] `in`
-    - [x] `out`
-    - [x] `error`
-    - [x] `ignoreErrors`
-    - [x] `loop`
-    - [x] `meta`
-    - [x] `retry`
+  - [x] `task`
+  - [x] `expr`
   - [ ] everything else
