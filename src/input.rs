@@ -190,7 +190,7 @@ impl<T: Iterator<Item = char>> Input<T> {
                 match style {
                     SingleQuoted | DoubleQuoted => Ok((Value::String(scalar), marker)),
                     Plain => {
-                        if parse_f64(&scalar).is_ok() {
+                        if scalar.contains(".") && parse_f64(&scalar).is_ok() {
                             Ok((Value::Float(scalar), marker))
                         } else if let Ok(value) = scalar.parse::<i64>() {
                             Ok((Value::Integer(value), marker))

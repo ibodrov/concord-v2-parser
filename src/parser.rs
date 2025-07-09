@@ -1,7 +1,8 @@
 use crate::error::{ErrorKind, ParseError};
 use crate::input::{next_kv, Event, Input};
 use crate::model::{
-    ConcordDocument, Configuration, Flow, FlowStep, Form, FormField, StepDefinition, Value, KV,
+    ConcordDocument, Configuration, Flow, FlowStep, Form, FormField, Loop, LoopMode, StepDefinition, Value,
+    KV,
 };
 use crate::parse_until;
 
@@ -21,6 +22,58 @@ fn parse_bool<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<bool, Pa
     }
 }
 
+fn parse_loop_mode<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<LoopMode, ParseError> {
+    let (mode, marker) = input.next_string()?;
+    match mode.as_str() {
+        "parallel" => Ok(LoopMode::Parallel),
+        "serial" => Ok(LoopMode::Serial),
+        unknown => Err(ParseError {
+            location: Some((input.current_document_path(), marker).into()),
+            kind: ErrorKind::UnexpectedSyntax,
+            msg: format!("Unexpected loop mode '{unknown}'. Only 'parallel' and 'serial' are supported."),
+        }),
+    }
+}
+
+fn parse_loop<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Loop, ParseError> {
+    let (_, marker) = input.next_mapping_start()?;
+
+    let mut items = None;
+    let mut mode = None;
+    let mut parallelism = None;
+
+    while let Ok(Some((element, marker))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "items" => items = Some(input.with_context("loop items", parse_value)?),
+            "mode" => mode = Some(input.with_context("loop mode", parse_loop_mode)?),
+            "parallelism" => parallelism = Some(input.with_context("loop parallelism", parse_value)?),
+            element => {
+                return Err(ParseError {
+                    location: Some((input.current_document_path(), marker).into()),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected loop element '{element}'"),
+                })
+            }
+        }
+    }
+    input.next_mapping_end()?;
+
+    let Some(items) = items else {
+        return Err(ParseError {
+            location: Some((input.current_document_path(), marker).into()),
+            kind: ErrorKind::UnexpectedSyntax,
+            msg: "The 'items' field is required in the loop".to_owned(),
+        });
+    };
+
+    Ok(Loop {
+        items,
+        mode,
+        parallelism,
+    })
+}
+
 fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
     let (task_name, ..) = input.next_string()?;
     input.enter_context(&format!("'{task_name}' task call"));
@@ -29,6 +82,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
     let mut task_output = None;
     let mut error = None;
     let mut ignore_errors = None;
+    let mut looping = None;
 
     while let Ok(Some((element, marker))) = input.peek_string() {
         input.try_next()?;
@@ -37,6 +91,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
             "out" => task_output = Some(input.with_context("'out' parameters", parse_value)?),
             "error" => error = Some(input.with_context("'error' block", parse_flow_steps)?),
             "ignoreErrors" => ignore_errors = Some(input.with_context("'ignoreErrors' option", parse_bool)?),
+            "loop" => looping = Some(input.with_context("'loop' option", parse_loop)?),
             element => {
                 return Err(ParseError {
                     location: Some((input.current_document_path(), marker).into()),
@@ -55,6 +110,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
         output: task_output,
         error,
         ignore_errors,
+        looping,
     })
 }
 
@@ -77,6 +133,7 @@ fn parse_single_argument_task<T: Iterator<Item = char>>(
         output: None,
         error: None,
         ignore_errors: None,
+        looping: None,
     })
 }
 

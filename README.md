@@ -8,22 +8,23 @@ Status:
   - [x] basic `configuration` parsing
     - [ ] structured parsing (`runtime`, `debug` and other standard parameters)
   - [x] basic `flows` parsing
-    - [x] `log`
-    - [x] `throw`
-    - [x] basic `task` calls
-        - [x] `name`
-        - [x] `in`
-        - [x] `out`
-        - [x] `error`
-        - [x] `ignoreErrors`
-        - [ ] `loop`
-        - [ ] `meta`
-        - [ ] `retry`
-    - [ ] everything else
   - [x] basic `forms` parsing
     - [ ] structured parsing of field options
   - [ ] `triggers`
   - [ ] `resources`
   - [ ] `imports`
   - [ ] `publicFlows`
+  - [ ] everything else
+- flow steps:
+  - [x] `log`
+  - [x] `throw`
+  - [x] basic `task` calls
+    - [x] `name`
+    - [x] `in`
+    - [x] `out`
+    - [x] `error`
+    - [x] `ignoreErrors`
+    - [x] `loop`
+    - [ ] `meta`
+    - [ ] `retry`
   - [ ] everything else

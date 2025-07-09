@@ -10,6 +10,7 @@ configuration:
         x:
           y:
             z: 123
+    aFloat: 3.141519
   debug: true
   processTimeout: PT15M
   requirements:
@@ -34,6 +35,11 @@ flows:
         - throw: ${lastError}!
   myOtherFlow:
     - log: "Bye!"
+    - task: somethingElse
+      loop:
+        items: ["a", "b", 123]
+        mode: "parallel"
+        parallelism: 128
 
 forms:
   myForm:

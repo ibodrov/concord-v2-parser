@@ -59,6 +59,19 @@ pub struct KV {
 }
 
 #[derive(Debug)]
+pub enum LoopMode {
+    Serial,
+    Parallel,
+}
+
+#[derive(Debug)]
+pub struct Loop {
+    pub items: Value,
+    pub mode: Option<LoopMode>,
+    pub parallelism: Option<Value>,
+}
+
+#[derive(Debug)]
 pub struct Configuration {
     pub location: Location,
     pub values: Vec<KV>,
@@ -72,6 +85,7 @@ pub enum StepDefinition {
         output: Option<Value>,
         error: Option<Vec<FlowStep>>,
         ignore_errors: Option<bool>,
+        looping: Option<Loop>,
     },
 }
 
