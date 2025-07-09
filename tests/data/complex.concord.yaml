@@ -134,6 +134,34 @@ flows:
       meta:
         foo: bar
 
+  flowWithBlocks:
+    - block:
+        - log: foo
+    - name: Try it
+      try:
+        - log: bar
+      error:
+        - log: ${lastError}
+      out: foo
+      meta:
+        foo: bar
+      loop:
+        items: ["a", "b", "c"]
+
+  flowWithParallels:
+    - parallel:
+        - log: a
+        - log: b
+    - parallel:
+        - log: x
+        - log: y
+        - log: z
+      out:
+        - x
+        - y
+      meta:
+        foo: "bar"
+
 forms:
   myForm:
     - firstName:

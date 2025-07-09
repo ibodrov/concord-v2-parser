@@ -1,5 +1,5 @@
 use crate::error::{ErrorKind, ParseError};
-use crate::input::{next_kv, Event, Input};
+use crate::input::{next_kv, Event, Input, Marker};
 use crate::model::{
     ConcordDocument, Configuration, Flow, FlowStep, Form, FormField, Loop, LoopMode, Retry, StepDefinition,
     Value, KV,
@@ -199,6 +199,8 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
 
     input.leave_context();
 
+    let error = error.map(|(steps, _)| steps);
+
     Ok(StepDefinition::TaskCall {
         task_name,
         input: task_input,
@@ -263,6 +265,8 @@ fn parse_expr<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefi
 
     input.leave_context();
 
+    let error = error.map(|(steps, _)| steps);
+
     Ok(StepDefinition::Expression {
         expr,
         output: expr_output,
@@ -305,6 +309,8 @@ fn parse_script<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDe
     }
 
     input.leave_context();
+
+    let error = error.map(|(steps, _)| steps);
 
     Ok(StepDefinition::Script {
         language_or_ref,
@@ -350,6 +356,8 @@ fn parse_flow_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
     }
 
     input.leave_context();
+
+    let error = error.map(|(steps, _)| steps);
 
     Ok(StepDefinition::FlowCall {
         flow_name,
@@ -415,13 +423,15 @@ fn parse_if<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefini
 
     input.leave_context();
 
-    let Some(then_steps) = then_steps else {
+    let Some((then_steps, _)) = then_steps else {
         return Err(ParseError {
             location: Some(location),
             kind: ErrorKind::UnexpectedSyntax,
             msg: "The 'then' steps are required in 'if' block".to_owned(),
         });
     };
+
+    let else_steps = else_steps.map(|(steps, _)| steps);
 
     Ok(StepDefinition::If {
         expression,
@@ -460,6 +470,82 @@ fn parse_set_variables<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result
     Ok(StepDefinition::SetVariables { vars, meta })
 }
 
+fn parse_parallel_block<T: Iterator<Item = char>>(
+    input: &mut Input<T>,
+) -> Result<StepDefinition, ParseError> {
+    input.enter_context("'parallel' block".to_string());
+
+    let (steps, marker) = parse_flow_steps(input)?;
+
+    let location = (input.current_document_path(), marker).into();
+    let mut block_output = None;
+    let mut meta = None;
+
+    while let Ok(Some((element, _))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "out" => block_output = Some(input.with_context("'out' parameters", parse_value)?),
+            "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            element => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected parallel block element '{element}'"),
+                })
+            }
+        }
+    }
+
+    input.leave_context();
+
+    Ok(StepDefinition::ParallelBlock {
+        steps,
+        output: block_output,
+        meta,
+    })
+}
+
+fn parse_block<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    input.enter_context("'parallel' block".to_string());
+
+    let (steps, marker) = parse_flow_steps(input)?;
+
+    let location = (input.current_document_path(), marker).into();
+    let mut block_output = None;
+    let mut error = None;
+    let mut looping = None;
+    let mut meta = None;
+
+    while let Ok(Some((element, _))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "out" => block_output = Some(input.with_context("'out' parameters", parse_value)?),
+            "error" => error = Some(input.with_context("'error' block", parse_flow_steps)?),
+            "loop" => looping = Some(input.with_context("'loop' option", parse_loop)?),
+            "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            element => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected parallel block element '{element}'"),
+                })
+            }
+        }
+    }
+
+    input.leave_context();
+
+    let error = error.map(|(steps, _)| steps);
+
+    Ok(StepDefinition::Block {
+        steps,
+        output: block_output,
+        error,
+        looping,
+        meta,
+    })
+}
+
 fn parse_flow_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
     let (_, step_marker) = input.next_mapping_start()?;
 
@@ -480,6 +566,8 @@ fn parse_flow_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flo
             "checkpoint" => step = Some(parse_checkpoint(input)?),
             "if" => step = Some(parse_if(input)?),
             "set" => step = Some(parse_set_variables(input)?),
+            "parallel" => step = Some(parse_parallel_block(input)?),
+            "try" | "block" => step = Some(parse_block(input)?),
             unknown => {
                 return Err(ParseError {
                     location: Some(location),
@@ -507,17 +595,19 @@ fn parse_flow_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flo
     })
 }
 
-fn parse_flow_steps<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<FlowStep>, ParseError> {
-    input.next_sequence_start()?;
+fn parse_flow_steps<T: Iterator<Item = char>>(
+    input: &mut Input<T>,
+) -> Result<(Vec<FlowStep>, Marker), ParseError> {
+    let (_, marker) = input.next_sequence_start()?;
     let steps = parse_until!(input, Event::SequenceEnd, parse_flow_step);
     input.next_sequence_end()?;
-    Ok(steps)
+    Ok((steps, marker))
 }
 
 fn parse_flow<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flow, ParseError> {
     let (name, marker) = input.next_string()?;
     input.enter_context(format!("'{name}' flow"));
-    let steps = parse_flow_steps(input)?;
+    let (steps, _) = parse_flow_steps(input)?;
     input.leave_context();
     Ok(Flow {
         location: (input.current_document_path(), marker).into(),

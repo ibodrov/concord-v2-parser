@@ -25,4 +25,7 @@ Status:
   - [x] `checkpoint`
   - [x] `if`
   - [x] `set`
+  - [x] `parallel`
+  - [x] `try`
+  - [x] `block`
   - [ ] everything else

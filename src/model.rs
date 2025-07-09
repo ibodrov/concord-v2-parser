@@ -138,6 +138,18 @@ pub enum StepDefinition {
         vars: Vec<KV>,
         meta: Option<Vec<KV>>,
     },
+    ParallelBlock {
+        steps: Vec<FlowStep>,
+        output: Option<Value>,
+        meta: Option<Vec<KV>>,
+    },
+    Block {
+        steps: Vec<FlowStep>,
+        output: Option<Value>,
+        error: Option<Vec<FlowStep>>,
+        looping: Option<Loop>,
+        meta: Option<Vec<KV>>,
+    },
 }
 
 #[derive(Debug)]
