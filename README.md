@@ -26,5 +26,5 @@ Status:
     - [x] `ignoreErrors`
     - [x] `loop`
     - [x] `meta`
-    - [ ] `retry`
+    - [x] `retry`
   - [ ] everything else

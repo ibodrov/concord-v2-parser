@@ -1,8 +1,8 @@
 use crate::error::{ErrorKind, ParseError};
 use crate::input::{next_kv, Event, Input};
 use crate::model::{
-    ConcordDocument, Configuration, Flow, FlowStep, Form, FormField, Loop, LoopMode, StepDefinition, Value,
-    KV,
+    ConcordDocument, Configuration, Flow, FlowStep, Form, FormField, Loop, LoopMode, Retry, StepDefinition,
+    Value, KV,
 };
 use crate::parse_until;
 
@@ -45,11 +45,12 @@ fn parse_loop_mode<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Loo
 fn parse_loop<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Loop, ParseError> {
     let (_, marker) = input.next_mapping_start()?;
 
+    let location = (input.current_document_path(), marker).into();
     let mut items = None;
     let mut mode = None;
     let mut parallelism = None;
 
-    while let Ok(Some((element, marker))) = input.peek_string() {
+    while let Ok(Some((element, _))) = input.peek_string() {
         input.try_next()?;
         match element.as_str() {
             "items" => items = Some(input.with_context("loop items", parse_value)?),
@@ -57,7 +58,7 @@ fn parse_loop<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Loop, Pa
             "parallelism" => parallelism = Some(input.with_context("loop parallelism", parse_value)?),
             element => {
                 return Err(ParseError {
-                    location: Some((input.current_document_path(), marker).into()),
+                    location: Some(location),
                     kind: ErrorKind::UnexpectedSyntax,
                     msg: format!("Unexpected loop element '{element}'"),
                 })
@@ -68,16 +69,50 @@ fn parse_loop<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Loop, Pa
 
     let Some(items) = items else {
         return Err(ParseError {
-            location: Some((input.current_document_path(), marker).into()),
+            location: Some(location),
             kind: ErrorKind::UnexpectedSyntax,
             msg: "The 'items' field is required in the loop".to_owned(),
         });
     };
 
     Ok(Loop {
+        location,
         items,
         mode,
         parallelism,
+    })
+}
+
+fn parse_retry<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Retry, ParseError> {
+    let (_, marker) = input.next_mapping_start()?;
+
+    let location = (input.current_document_path(), marker).into();
+    let mut times = None;
+    let mut delay = None;
+    let mut retry_input = None;
+
+    while let Ok(Some((element, _))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "times" => times = Some(input.with_context("retry 'times' option", parse_value)?),
+            "delay" => delay = Some(input.with_context("retry delay", parse_value)?),
+            "in" => retry_input = Some(input.with_context("retry input", parse_value)?),
+            element => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected loop element '{element}'"),
+                })
+            }
+        }
+    }
+    input.next_mapping_end()?;
+
+    Ok(Retry {
+        location,
+        times,
+        delay,
+        input: retry_input,
     })
 }
 
@@ -91,6 +126,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
     let mut ignore_errors = None;
     let mut looping = None;
     let mut meta = None;
+    let mut retry = None;
 
     while let Ok(Some((element, marker))) = input.peek_string() {
         input.try_next()?;
@@ -101,6 +137,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
             "ignoreErrors" => ignore_errors = Some(input.with_context("'ignoreErrors' option", parse_bool)?),
             "loop" => looping = Some(input.with_context("'loop' option", parse_loop)?),
             "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            "retry" => retry = Some(input.with_context("'retry' option", parse_retry)?),
             element => {
                 return Err(ParseError {
                     location: Some((input.current_document_path(), marker).into()),
@@ -121,6 +158,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
         ignore_errors,
         looping,
         meta,
+        retry,
     })
 }
 
@@ -145,6 +183,7 @@ fn parse_single_argument_task<T: Iterator<Item = char>>(
         ignore_errors: None,
         looping: None,
         meta: None,
+        retry: None,
     })
 }
 

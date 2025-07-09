@@ -66,9 +66,18 @@ pub enum LoopMode {
 
 #[derive(Debug)]
 pub struct Loop {
+    pub location: Location,
     pub items: Value,
     pub mode: Option<LoopMode>,
     pub parallelism: Option<Value>,
+}
+
+#[derive(Debug)]
+pub struct Retry {
+    pub location: Location,
+    pub times: Option<Value>,
+    pub delay: Option<Value>,
+    pub input: Option<Value>,
 }
 
 #[derive(Debug)]
@@ -87,6 +96,7 @@ pub enum StepDefinition {
         ignore_errors: Option<bool>,
         looping: Option<Loop>,
         meta: Option<Vec<KV>>,
+        retry: Option<Retry>,
     },
 }
 

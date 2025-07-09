@@ -42,6 +42,11 @@ flows:
         parallelism: 128
       meta:
         foo: "bar"
+      retry:
+        delay: 10
+        times: 3
+        in:
+          baz: "qux"
 
 forms:
   myForm:
