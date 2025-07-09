@@ -80,6 +80,29 @@ flows:
               z: 123
       body: |
         println('hi');
+  flowWithCalls:
+    - call: flowWithTasks
+    - name: Call a flow
+      call: flowWithTasks
+      in:
+        foo:
+          bar:
+            baz: "qux"
+      out:
+        - x
+        - y
+        - z
+      retry:
+        delay: 123
+      error:
+        - log: ${lastError}
+      meta:
+        foo: "bar"
+      loop:
+        items:
+          - a
+          - b
+          - c
 
 forms:
   myForm:

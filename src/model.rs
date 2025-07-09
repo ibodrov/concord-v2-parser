@@ -115,6 +115,15 @@ pub enum StepDefinition {
         meta: Option<Vec<KV>>,
         retry: Option<Retry>,
     },
+    FlowCall {
+        flow_name: String,
+        input: Option<Value>,
+        output: Option<Value>,
+        error: Option<Vec<FlowStep>>,
+        looping: Option<Loop>,
+        meta: Option<Vec<KV>>,
+        retry: Option<Retry>,
+    },
 }
 
 #[derive(Debug)]

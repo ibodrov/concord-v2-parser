@@ -20,4 +20,5 @@ Status:
   - [x] `task`
   - [x] `expr`
   - [x] `script`
+  - [x] `call`
   - [ ] everything else

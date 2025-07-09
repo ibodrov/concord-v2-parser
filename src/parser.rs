@@ -318,6 +318,50 @@ fn parse_script<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDe
     })
 }
 
+fn parse_flow_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    let (flow_name, marker) = input.next_string()?;
+    input.enter_context(format!("call '{flow_name}"));
+
+    let location = (input.current_document_path(), marker).into();
+    let mut call_input = None;
+    let mut call_output = None;
+    let mut error = None;
+    let mut looping = None;
+    let mut meta = None;
+    let mut retry = None;
+
+    while let Ok(Some((element, _))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "in" => call_input = Some(input.with_context("'in' parameters", parse_value)?),
+            "out" => call_output = Some(input.with_context("'out' parameters", parse_value)?),
+            "error" => error = Some(input.with_context("'error' block", parse_flow_steps)?),
+            "loop" => looping = Some(input.with_context("'loop' option", parse_loop)?),
+            "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            "retry" => retry = Some(input.with_context("'retry' option", parse_retry)?),
+            element => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected script step element '{element}'"),
+                })
+            }
+        }
+    }
+
+    input.leave_context();
+
+    Ok(StepDefinition::FlowCall {
+        flow_name,
+        input: call_input,
+        output: call_output,
+        error,
+        looping,
+        meta,
+        retry,
+    })
+}
+
 fn parse_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
     let (_, step_marker) = input.next_mapping_start()?;
 
@@ -334,6 +378,7 @@ fn parse_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep
             "task" => step = Some(parse_task_call(input)?),
             "expr" => step = Some(parse_expr(input)?),
             "script" => step = Some(parse_script(input)?),
+            "call" => step = Some(parse_flow_call(input)?),
             unknown => {
                 return Err(ParseError {
                     location: Some(location),
