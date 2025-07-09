@@ -86,6 +86,7 @@ pub enum StepDefinition {
         error: Option<Vec<FlowStep>>,
         ignore_errors: Option<bool>,
         looping: Option<Loop>,
+        meta: Option<Vec<KV>>,
     },
 }
 

@@ -40,6 +40,8 @@ flows:
         items: ["a", "b", 123]
         mode: "parallel"
         parallelism: 128
+      meta:
+        foo: "bar"
 
 forms:
   myForm:

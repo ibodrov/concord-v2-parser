@@ -22,6 +22,13 @@ fn parse_bool<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<bool, Pa
     }
 }
 
+fn parse_meta<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<KV>, ParseError> {
+    input.next_mapping_start()?;
+    let result = parse_until!(input, Event::MappingEnd, next_kv);
+    input.next_mapping_end()?;
+    Ok(result)
+}
+
 fn parse_loop_mode<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<LoopMode, ParseError> {
     let (mode, marker) = input.next_string()?;
     match mode.as_str() {
@@ -83,6 +90,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
     let mut error = None;
     let mut ignore_errors = None;
     let mut looping = None;
+    let mut meta = None;
 
     while let Ok(Some((element, marker))) = input.peek_string() {
         input.try_next()?;
@@ -92,6 +100,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
             "error" => error = Some(input.with_context("'error' block", parse_flow_steps)?),
             "ignoreErrors" => ignore_errors = Some(input.with_context("'ignoreErrors' option", parse_bool)?),
             "loop" => looping = Some(input.with_context("'loop' option", parse_loop)?),
+            "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
             element => {
                 return Err(ParseError {
                     location: Some((input.current_document_path(), marker).into()),
@@ -111,6 +120,7 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
         error,
         ignore_errors,
         looping,
+        meta,
     })
 }
 
@@ -134,6 +144,7 @@ fn parse_single_argument_task<T: Iterator<Item = char>>(
         error: None,
         ignore_errors: None,
         looping: None,
+        meta: None,
     })
 }
 
