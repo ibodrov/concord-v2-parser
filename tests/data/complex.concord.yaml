@@ -162,6 +162,21 @@ flows:
       meta:
         foo: "bar"
 
+  flowWithSwitches:
+    - switch: ${foo}
+      abc:
+        - log: "abc"
+      xyz:
+        - log: "abc"
+      ${foo}:
+        - log: "foo!"
+      123:
+        - log: "123"
+      default:
+        - log: "default"
+      meta:
+        bar: baz
+
 forms:
   myForm:
     - firstName:

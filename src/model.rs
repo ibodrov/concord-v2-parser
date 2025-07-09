@@ -81,6 +81,12 @@ pub struct Retry {
 }
 
 #[derive(Debug)]
+pub struct SwitchCase {
+    pub label: Value,
+    pub steps: Vec<FlowStep>,
+}
+
+#[derive(Debug)]
 pub struct Configuration {
     pub location: Location,
     pub values: Vec<KV>,
@@ -148,6 +154,12 @@ pub enum StepDefinition {
         output: Option<Value>,
         error: Option<Vec<FlowStep>>,
         looping: Option<Loop>,
+        meta: Option<Vec<KV>>,
+    },
+    Switch {
+        expression: String,
+        cases: Vec<SwitchCase>,
+        default: Option<Vec<FlowStep>>,
         meta: Option<Vec<KV>>,
     },
 }

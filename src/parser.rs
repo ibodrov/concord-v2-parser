@@ -2,7 +2,7 @@ use crate::error::{ErrorKind, ParseError};
 use crate::input::{next_kv, Event, Input, Marker};
 use crate::model::{
     ConcordDocument, Configuration, Flow, FlowStep, Form, FormField, Loop, LoopMode, Retry, StepDefinition,
-    Value, KV,
+    SwitchCase, Value, KV,
 };
 use crate::parse_until;
 
@@ -546,6 +546,56 @@ fn parse_block<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDef
     })
 }
 
+fn parse_switch<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    let (expression, marker) = input.next_string()?;
+    input.enter_context(format!("switch '{expression}'"));
+
+    let location = (input.current_document_path(), marker).into();
+    let mut cases = Vec::new();
+    let mut default = None;
+    let mut meta = None;
+
+    while let Ok((value, _)) = input.peek_value() {
+        input.try_next()?;
+        match value {
+            Value::String(s) if s == "default" => {
+                default = Some(input.with_context("'default' block", parse_flow_steps)?)
+            }
+            Value::String(s) if s == "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            case_label => {
+                let steps = input.with_context(format!("case {case_label:?} steps"), |input| {
+                    let (steps, _) = parse_flow_steps(input)?;
+                    Ok(steps)
+                })?;
+
+                cases.push(SwitchCase {
+                    label: case_label,
+                    steps,
+                });
+            }
+        }
+    }
+
+    input.leave_context();
+
+    if default.is_none() && cases.is_empty() {
+        return Err(ParseError {
+            location: Some(location),
+            kind: ErrorKind::UnexpectedSyntax,
+            msg: "The 'switch' block requires at least one case and/or the 'default' block".to_owned(),
+        });
+    }
+
+    let default = default.map(|(steps, _)| steps);
+
+    Ok(StepDefinition::Switch {
+        expression,
+        cases,
+        default,
+        meta,
+    })
+}
+
 fn parse_flow_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
     let (_, step_marker) = input.next_mapping_start()?;
 
@@ -557,16 +607,17 @@ fn parse_flow_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flo
         input.try_next()?;
         match name_or_step.as_str() {
             "name" => step_name = Some(input.next_string()?.0),
-            "log" => step = Some(parse_single_argument_task(input, "log", "msg")?),
-            "throw" => step = Some(parse_single_argument_task(input, "throw", "exception")?),
-            "task" => step = Some(parse_task_call(input)?),
-            "expr" => step = Some(parse_expr(input)?),
-            "script" => step = Some(parse_script(input)?),
             "call" => step = Some(parse_flow_call(input)?),
             "checkpoint" => step = Some(parse_checkpoint(input)?),
+            "expr" => step = Some(parse_expr(input)?),
             "if" => step = Some(parse_if(input)?),
-            "set" => step = Some(parse_set_variables(input)?),
+            "log" => step = Some(parse_single_argument_task(input, "log", "msg")?),
             "parallel" => step = Some(parse_parallel_block(input)?),
+            "script" => step = Some(parse_script(input)?),
+            "set" => step = Some(parse_set_variables(input)?),
+            "switch" => step = Some(parse_switch(input)?),
+            "task" => step = Some(parse_task_call(input)?),
+            "throw" => step = Some(parse_single_argument_task(input, "throw", "exception")?),
             "try" | "block" => step = Some(parse_block(input)?),
             unknown => {
                 return Err(ParseError {

@@ -28,4 +28,7 @@ Status:
   - [x] `parallel`
   - [x] `try`
   - [x] `block`
+  - [x] `switch`
+  - [ ] `suspend`
+  - [ ] `form`
   - [ ] everything else

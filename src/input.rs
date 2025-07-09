@@ -99,7 +99,7 @@ impl<T: Iterator<Item = char>> Input<T> {
         self.document_path.pop();
     }
 
-    pub fn with_context<O, F>(&mut self, name: &str, f: F) -> Result<O, ParseError>
+    pub fn with_context<S: ToString, O, F>(&mut self, name: S, f: F) -> Result<O, ParseError>
     where
         F: Fn(&mut Self) -> Result<O, ParseError>,
     {
@@ -184,21 +184,27 @@ impl<T: Iterator<Item = char>> Input<T> {
     }
 
     pub fn next_value(&mut self) -> Result<(Value, Marker), ParseError> {
-        match self.try_next()? {
-            (Event::Scalar(scalar, style, ..), marker) => {
+        let (event, marker) = self.try_next()?;
+        let value = self.parse_value(event, marker)?;
+        Ok((value, marker))
+    }
+
+    fn parse_value(&mut self, event: Event, marker: Marker) -> Result<Value, ParseError> {
+        match event {
+            Event::Scalar(scalar, style, ..) => {
                 use yaml_rust2::scanner::TScalarStyle::*;
                 match style {
-                    SingleQuoted | DoubleQuoted => Ok((Value::String(scalar), marker)),
+                    SingleQuoted | DoubleQuoted => Ok(Value::String(scalar)),
                     Plain => {
                         if scalar.contains(".") && parse_f64(&scalar).is_ok() {
-                            Ok((Value::Float(scalar), marker))
+                            Ok(Value::Float(scalar))
                         } else if let Ok(value) = scalar.parse::<i64>() {
-                            Ok((Value::Integer(value), marker))
+                            Ok(Value::Integer(value))
                         } else if let Ok(value) = scalar.parse::<bool>() {
                             // TODO handle "yes/no", etc
-                            Ok((Value::Boolean(value), marker))
+                            Ok(Value::Boolean(value))
                         } else {
-                            Ok((Value::String(scalar), marker))
+                            Ok(Value::String(scalar))
                         }
                     }
                     _ => Err(ParseError {
@@ -208,22 +214,22 @@ impl<T: Iterator<Item = char>> Input<T> {
                     }),
                 }
             }
-            (Event::SequenceStart(..), marker) => {
+            Event::SequenceStart(..) => {
                 let result = parse_until!(self, Event::SequenceEnd, next_value)
                     .into_iter()
                     .map(|(v, _)| v)
                     .collect();
                 self.next_sequence_end()?;
-                Ok((Value::Array(result), marker))
+                Ok(Value::Array(result))
             }
-            (Event::MappingStart(..), marker) => {
+            Event::MappingStart(..) => {
                 let result = parse_until!(self, Event::MappingEnd, next_kv)
                     .into_iter()
                     .collect();
                 self.next_mapping_end()?;
-                Ok((Value::Mapping(result), marker))
+                Ok(Value::Mapping(result))
             }
-            (ev, marker) => Err(ParseError {
+            ev => Err(ParseError {
                 location: Some((self.current_document_path(), marker).into()),
                 kind: ErrorKind::UnexpectedSyntax,
                 msg: format!("Expected a value, got {ev:?}"),
@@ -245,6 +251,12 @@ impl<T: Iterator<Item = char>> Input<T> {
                 msg: format!("Expected to peek a scalar, got {ev:?}"),
             }),
         }
+    }
+
+    pub fn peek_value(&mut self) -> Result<(Value, Marker), ParseError> {
+        let (event, marker) = self.peek().cloned()?;
+        let value = self.parse_value(event, marker)?;
+        Ok((value, marker))
     }
 }
 
