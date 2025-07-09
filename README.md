@@ -1,7 +1,6 @@
 # concord-v2-parser
 
 A work-in-progress parser for Concord's `runtime-v2` format.
-The main goal is to avoid any external dependencies except for `yaml-rust2`.
 
 Status:
 - top-level blocks:
@@ -20,4 +19,5 @@ Status:
   - [x] `throw`
   - [x] `task`
   - [x] `expr`
+  - [x] `script`
   - [ ] everything else

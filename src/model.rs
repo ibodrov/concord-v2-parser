@@ -105,6 +105,16 @@ pub enum StepDefinition {
         error: Option<Vec<FlowStep>>,
         meta: Option<Vec<KV>>,
     },
+    Script {
+        language_or_ref: String,
+        body: Option<String>,
+        input: Option<Value>,
+        output: Option<Value>,
+        error: Option<Vec<FlowStep>>,
+        looping: Option<Loop>,
+        meta: Option<Vec<KV>>,
+        retry: Option<Retry>,
+    },
 }
 
 #[derive(Debug)]

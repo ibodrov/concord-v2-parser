@@ -91,8 +91,8 @@ macro_rules! parse_until {
 }
 
 impl<T: Iterator<Item = char>> Input<T> {
-    pub fn enter_context(&mut self, name: &str) {
-        self.document_path.push(name.to_owned());
+    pub fn enter_context<S: ToString>(&mut self, name: S) {
+        self.document_path.push(name.to_string());
     }
 
     pub fn leave_context(&mut self) {
@@ -173,7 +173,7 @@ impl<T: Iterator<Item = char>> Input<T> {
 
     pub fn next_kv(&mut self) -> Result<KV, ParseError> {
         let (key, marker) = self.next_string()?;
-        self.enter_context(&format!("'{key}'"));
+        self.enter_context(format!("'{key}'"));
         let (value, _) = self.next_value()?;
         self.leave_context();
         Ok(KV {

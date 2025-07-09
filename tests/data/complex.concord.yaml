@@ -18,8 +18,12 @@ configuration:
       capableOf: "everything"
 
 flows:
-  default:
+  flowWithLogs:
     - log: "Hello!"
+    - name: "Say bye"
+      log: "Bye!"
+
+  flowWithTasks:
     - task: awesome-task
       in:
         a: 123
@@ -33,15 +37,6 @@ flows:
       error:
         - log: Boom, ${lastError}!
         - throw: ${lastError}!
-    - name: "Boo!"
-      expr: ${boo}
-      meta:
-        foobar: "barbaz"
-      error:
-        - log: "${lastError}"
-      out: exprOut
-  myOtherFlow:
-    - log: "Bye!"
     - task: somethingElse
       loop:
         items: ["a", "b", 123]
@@ -54,6 +49,37 @@ flows:
         times: 3
         in:
           baz: "qux"
+  flowWithExprs:
+    - expr: ${boo}
+    - name: "Boo!"
+      expr: ${boo}
+      meta:
+        foobar: "barbaz"
+      error:
+        - log: "${lastError}"
+      out: exprOut
+  flowWithScripts:
+    - script: js
+      body: |
+        println('hi');
+    - name: Groovy!
+      script: groovy
+      in:
+        foo: "bar"
+      out: result
+      meta:
+        baz: "qux"
+      error:
+        - log: "${lastError}"
+      retry:
+        times: 1
+        delay: 2
+        in:
+          x:
+            y:
+              z: 123
+      body: |
+        println('hi');
 
 forms:
   myForm:
