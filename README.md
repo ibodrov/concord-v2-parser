@@ -15,20 +15,19 @@ Status:
   - [ ] `publicFlows`
   - [ ] everything else
 - flow steps:
-  - [x] `log`
-  - [ ] `logYaml`
-  - [x] `throw`
-  - [x] `task`
-  - [x] `expr`
-  - [x] `script`
+  - [x] `block`
   - [x] `call`
   - [x] `checkpoint`
+  - [x] `expr`
+  - [x] `form`
   - [x] `if`
-  - [x] `set`
+  - [x] `log`
+  - [x] `logYaml`
   - [x] `parallel`
-  - [x] `try`
-  - [x] `block`
+  - [x] `script`
+  - [x] `set`
+  - [x] `suspend`
   - [x] `switch`
-  - [ ] `suspend`
-  - [ ] `form`
-  - [ ] everything else
+  - [x] `task`
+  - [x] `throw`
+  - [x] `try`

@@ -33,7 +33,7 @@ impl Debug for DocumentPath {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Location {
     pub path: DocumentPath,
     pub index: usize,
@@ -160,6 +160,19 @@ pub enum StepDefinition {
         expression: String,
         cases: Vec<SwitchCase>,
         default: Option<Vec<FlowStep>>,
+        meta: Option<Vec<KV>>,
+    },
+    Suspend {
+        event: String,
+        meta: Option<Vec<KV>>,
+    },
+    FormCall {
+        form_name: String,
+        yield_execution: Option<bool>,
+        save_submitted_by: Option<bool>,
+        run_as: Option<Value>,
+        values: Option<Value>,
+        fields: Option<Vec<FormField>>,
         meta: Option<Vec<KV>>,
     },
 }

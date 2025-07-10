@@ -22,6 +22,12 @@ flows:
     - log: "Hello!"
     - name: "Say bye"
       log: "Bye!"
+    - name: It's YAML!
+      logYaml:
+        a:
+          b: "c"
+      meta:
+        bar: "baz"
 
   flowWithTasks:
     - task: awesome-task
@@ -176,6 +182,30 @@ flows:
         - log: "default"
       meta:
         bar: baz
+
+  flowWithSuspends:
+    - suspend: foo
+    - name: Suspend now!
+      suspend: bar
+      meta:
+        xyz: "abc"
+
+  flowWithFormCalls:
+    - form: myForm
+    - name: A form!
+      form: myForm2
+      meta:
+        bar: "baz"
+      fields:
+        - age:
+            type: int+
+        - areYouARobot:
+            type: boolean+
+      values:
+        a: "a"
+        b: "b"
+      runAs:
+        someone: else
 
 forms:
   myForm:

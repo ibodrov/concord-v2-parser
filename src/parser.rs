@@ -46,16 +46,18 @@ fn parse_form_field<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Fo
     })
 }
 
-fn parse_form<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Form, ParseError> {
-    let (name, marker) = input.next_string()?;
-    input.enter_context(format!("'{name}' form"));
-
+fn parse_form_fields<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<FormField>, ParseError> {
     input.next_sequence_start()?;
     let fields = parse_until!(input, Event::SequenceEnd, parse_form_field);
     input.next_sequence_end()?;
+    Ok(fields)
+}
 
+fn parse_form<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Form, ParseError> {
+    let (name, marker) = input.next_string()?;
+    input.enter_context(format!("'{name}' form"));
+    let fields = parse_form_fields(input)?;
     input.leave_context();
-
     Ok(Form {
         location: (input.current_document_path(), marker).into(),
         name,
@@ -213,29 +215,77 @@ fn parse_task_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
     })
 }
 
-fn parse_single_argument_task<T: Iterator<Item = char>>(
+fn parse_simple_task_call<T: Iterator<Item = char>>(
     input: &mut Input<T>,
     task_name: &str,
     parameter_name: &str,
+    extra_input: Option<Vec<(String, Value)>>,
 ) -> Result<StepDefinition, ParseError> {
-    input.enter_context(format!("'{task_name}' step"));
-    let (value, value_marker) = input.next_value()?;
-    let task_input = Value::Mapping(vec![KV {
-        location: (input.current_document_path(), value_marker).into(),
+    input.enter_context(task_name);
+
+    let (value, marker) = input.next_value()?;
+    let location = (input.current_document_path(), marker).into();
+    let mut meta = None;
+
+    while let Ok(Some((element, _))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            element => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected {task_name} element '{element}'"),
+                })
+            }
+        }
+    }
+
+    input.leave_context();
+
+    let mut input = vec![KV {
+        location: location.clone(),
         key: parameter_name.to_owned(),
         value,
-    }]);
-    input.leave_context();
+    }];
+
+    if let Some(extra_input) = extra_input {
+        for (key, value) in extra_input {
+            input.push(KV {
+                location: location.clone(),
+                key,
+                value,
+            })
+        }
+    }
+
     Ok(StepDefinition::TaskCall {
         task_name: task_name.to_owned(),
-        input: Some(task_input),
+        input: Some(Value::Mapping(input)),
+        meta,
         output: None,
         error: None,
         ignore_errors: None,
         looping: None,
-        meta: None,
         retry: None,
     })
+}
+
+fn parse_log<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    parse_simple_task_call(input, "log", "msg", None)
+}
+
+fn parse_log_yaml<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    parse_simple_task_call(
+        input,
+        "log",
+        "msg",
+        Some(vec![("format".to_owned(), Value::String("yaml".to_owned()))]),
+    )
+}
+
+fn parse_throw<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    parse_simple_task_call(input, "throw", "exception", None)
 }
 
 fn parse_expr<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
@@ -596,6 +646,80 @@ fn parse_switch<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDe
     })
 }
 
+fn parse_suspend<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    let (event, marker) = input.next_string()?;
+
+    input.enter_context(format!("suspend on '{event}'"));
+
+    let location = (input.current_document_path(), marker).into();
+    let mut meta = None;
+
+    while let Ok(Some((element, _))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            element => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected suspend element '{element}'"),
+                })
+            }
+        }
+    }
+
+    input.leave_context();
+
+    Ok(StepDefinition::Suspend { event, meta })
+}
+
+fn parse_form_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<StepDefinition, ParseError> {
+    let (form_name, marker) = input.next_string()?;
+
+    input.enter_context(format!("'{form_name}' form call"));
+
+    let location = (input.current_document_path(), marker).into();
+    let mut yield_execution = None;
+    let mut save_submitted_by = None;
+    let mut run_as = None;
+    let mut values = None;
+    let mut fields = None;
+    let mut meta = None;
+
+    while let Ok(Some((element, ..))) = input.peek_string() {
+        input.try_next()?;
+        match element.as_str() {
+            "yield" => yield_execution = Some(input.with_context("'yield' option", parse_bool)?),
+            "saveSubmittedBy" => {
+                save_submitted_by = Some(input.with_context("'saveSubmittedBy' option", parse_bool)?)
+            }
+            "runAs" => run_as = Some(input.with_context("'runAs' option", parse_value)?),
+            "values" => values = Some(input.with_context("'values' option", parse_value)?),
+            "fields" => fields = Some(input.with_context("'fields' option", parse_form_fields)?),
+            "meta" => meta = Some(input.with_context("'meta' block", parse_meta)?),
+            element => {
+                return Err(ParseError {
+                    location: Some(location),
+                    kind: ErrorKind::UnexpectedSyntax,
+                    msg: format!("Unexpected form call element '{element}'"),
+                })
+            }
+        }
+    }
+
+    input.leave_context();
+
+    Ok(StepDefinition::FormCall {
+        form_name,
+        yield_execution,
+        save_submitted_by,
+        run_as,
+        values,
+        fields,
+        meta,
+    })
+}
+
 fn parse_flow_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
     let (_, step_marker) = input.next_mapping_start()?;
 
@@ -611,14 +735,17 @@ fn parse_flow_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Flo
             "checkpoint" => step = Some(parse_checkpoint(input)?),
             "expr" => step = Some(parse_expr(input)?),
             "if" => step = Some(parse_if(input)?),
-            "log" => step = Some(parse_single_argument_task(input, "log", "msg")?),
+            "log" => step = Some(parse_log(input)?),
+            "logYaml" => step = Some(parse_log_yaml(input)?),
             "parallel" => step = Some(parse_parallel_block(input)?),
             "script" => step = Some(parse_script(input)?),
             "set" => step = Some(parse_set_variables(input)?),
             "switch" => step = Some(parse_switch(input)?),
             "task" => step = Some(parse_task_call(input)?),
-            "throw" => step = Some(parse_single_argument_task(input, "throw", "exception")?),
+            "throw" => step = Some(parse_throw(input)?),
             "try" | "block" => step = Some(parse_block(input)?),
+            "suspend" => step = Some(parse_suspend(input)?),
+            "form" => step = Some(parse_form_call(input)?),
             unknown => {
                 return Err(ParseError {
                     location: Some(location),
