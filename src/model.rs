@@ -210,4 +210,5 @@ pub struct ConcordDocument {
     pub configuration: Option<Configuration>,
     pub flows: Option<Vec<Flow>>,
     pub forms: Option<Vec<Form>>,
+    pub public_flows: Option<Vec<String>>,
 }

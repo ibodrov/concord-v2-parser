@@ -17,6 +17,10 @@ configuration:
     agent:
       capableOf: "everything"
 
+publicFlows:
+  - flowWithLogs
+  - flowWithTasks
+
 flows:
   flowWithLogs:
     - log: "Hello!"

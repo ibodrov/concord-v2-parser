@@ -12,8 +12,8 @@ Status:
   - [ ] `triggers`
   - [ ] `resources`
   - [ ] `imports`
-  - [ ] `publicFlows`
-  - [ ] everything else
+  - [x] `publicFlows`
+  - [ ] `profiles`
 - flow steps:
   - [x] `block`
   - [x] `call`

@@ -27,6 +27,13 @@ fn parse_string<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<String
     Ok(value)
 }
 
+fn parse_list_of_strings<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Vec<String>, ParseError> {
+    input.next_sequence_start()?;
+    let values = parse_until!(input, Event::SequenceEnd, parse_string);
+    input.next_sequence_end()?;
+    Ok(values)
+}
+
 fn parse_form_field<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FormField, ParseError> {
     input.next_mapping_start()?;
 
@@ -819,19 +826,17 @@ fn parse_document<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Conc
     let mut configuration = None;
     let mut flows = None;
     let mut forms = None;
+    let mut public_flows = None;
 
     while let Ok(Some((top_level_element, marker))) = input.peek_string() {
         input.try_next()?;
         match top_level_element.as_str() {
             "configuration" => {
-                configuration = Some(input.with_context("configuration", parse_configuration)?);
+                configuration = Some(input.with_context("configuration", parse_configuration)?)
             }
-            "flows" => {
-                flows = Some(input.with_context("flows", parse_flows)?);
-            }
-            "forms" => {
-                forms = Some(input.with_context("forms", parse_forms)?);
-            }
+            "flows" => flows = Some(input.with_context("flows", parse_flows)?),
+            "forms" => forms = Some(input.with_context("forms", parse_forms)?),
+            "publicFlows" => public_flows = Some(input.with_context("publicFlows", parse_list_of_strings)?),
             element => {
                 return Err(ParseError {
                     location: Some((input.current_document_path(), marker).into()),
@@ -849,6 +854,7 @@ fn parse_document<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Conc
         configuration,
         flows,
         forms,
+        public_flows,
     })
 }
 
