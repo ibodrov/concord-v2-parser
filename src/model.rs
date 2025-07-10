@@ -175,6 +175,7 @@ pub enum StepDefinition {
         fields: Option<Vec<FormField>>,
         meta: Option<Vec<KV>>,
     },
+    Return,
 }
 
 #[derive(Debug)]

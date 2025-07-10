@@ -728,6 +728,25 @@ fn parse_form_call<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<Ste
 }
 
 fn parse_flow_step<T: Iterator<Item = char>>(input: &mut Input<T>) -> Result<FlowStep, ParseError> {
+    // "scalar" steps
+    if let Ok(Some((scalar, step_marker))) = input.peek_string() {
+        input.try_next()?;
+        let location = (input.current_document_path(), step_marker).into();
+        return match scalar.as_str() {
+            "return" => Ok(FlowStep {
+                location,
+                step_name: None,
+                step: StepDefinition::Return,
+            }),
+            unknown => Err(ParseError {
+                location: Some(location),
+                kind: ErrorKind::UnexpectedSyntax,
+                msg: format!("Unknown step '{unknown}'"),
+            }),
+        };
+    }
+
+    // "object" steps
     let (_, step_marker) = input.next_mapping_start()?;
 
     let location = (input.current_document_path(), step_marker).into();

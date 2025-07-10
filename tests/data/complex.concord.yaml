@@ -211,6 +211,9 @@ flows:
       runAs:
         someone: else
 
+  flowWithReturn:
+    - return
+
 forms:
   myForm:
     - firstName:

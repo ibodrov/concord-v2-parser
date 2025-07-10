@@ -31,3 +31,4 @@ Status:
   - [x] `task`
   - [x] `throw`
   - [x] `try`
+  - [x] `return`
