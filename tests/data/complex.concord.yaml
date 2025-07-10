@@ -26,6 +26,14 @@ flows:
     - log: "Hello!"
     - name: "Say bye"
       log: "Bye!"
+    - name: "Multiline!"
+      log: |
+        line1
+        line2
+    - name: "Folded!"
+      log: >
+        folded1
+        folded2
     - name: It's YAML!
       logYaml:
         a:

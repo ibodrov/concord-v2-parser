@@ -207,11 +207,7 @@ impl<T: Iterator<Item = char>> Input<T> {
                             Ok(Value::String(scalar))
                         }
                     }
-                    _ => Err(ParseError {
-                        location: Some((self.current_document_path(), marker).into()),
-                        kind: ErrorKind::UnexpectedSyntax,
-                        msg: format!("Unsupported value syntax, got \"{scalar}\" as {style:?}"),
-                    }),
+                    Literal | Folded => Ok(Value::String(scalar)),
                 }
             }
             Event::SequenceStart(..) => {
